@@ -1,0 +1,9 @@
+/data
+/src/.virtual_documents
+/src/logs
+/src/mylogin.py
+/src/economist-scraper.ipynb
+/src/geckodriver.log
+.ipynb_checkpoints
+.python-version
+__pycache__

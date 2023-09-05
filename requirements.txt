@@ -1,0 +1,5 @@
+selenium
+tabulate
+pandas
+tqdm
+borb
