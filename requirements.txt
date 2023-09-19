@@ -1,5 +1,8 @@
 selenium
-tabulate
+natsort
 pandas
-tqdm
+PyPDF2
 borb
+tqdm
+keepassxc_proxy_client
+python-gnupg
