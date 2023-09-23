@@ -12,11 +12,11 @@
 #     name: python3
 # ---
 
+# %%
+# #!/usr/bin/env python
+
 # %% language="sh"
 # which python3
-
-# %%
-print("ciao")
 
 # %%
 from selenium import webdriver
@@ -56,7 +56,7 @@ proquest_url = "https://www.proquest.com/publication/41716"
 browser_app = "firefox"
 geckodriver_path = Path(os.environ["HOME"])/".local"/"bin"/"geckodriver"
 assert(geckodriver_path.is_file())
-headless_browser = False
+headless_browser = True
 
 continue_download = False
 
@@ -66,12 +66,8 @@ artdir = downloaddir/"articles"
 pagesdir = downloaddir/"pages"
 tocdir = downloaddir/"toc"
 
-journal_latest = True
-journal_year = None
-journal_month = None
-# 0-based index
-# lower numbers correspond to more recent issues
-journal_issue = None
+#journal_date = "2023-09-23"
+journal_date = datetime.datetime.today().strftime("%Y-%m-%d")
 
 sleep_time = (5, 15)
 
@@ -84,29 +80,57 @@ artdir.mkdir(parents=True, exist_ok=True)
 pagesdir.mkdir(parents=True, exist_ok=True)
 tocdir.mkdir(parents=True, exist_ok=True)
 
-# %%
-if(journal_latest):
-    assert(journal_year is None)
-    assert(journal_month is None)
-    assert(journal_issue is None)
-if(journal_year or journal_month or journal_issue):
-    assert(not journal_latest)
-    # journal_year
-    assert(type(journal_year)==int)
-    assert(1900<=journal_year<=2100)
-    # journal_month
-    assert(type(journal_month)==str)
-    assert(journal_month in ["January", "February", "March", 
-                             "April", "May", "June", "July", 
-                             "August", "September", "October", "November",
-                             "December"])
-    # journal_issue
-    assert(type(journal_issue)==int)
-    assert(0<=journal_issue<=3)
-
 
 # %% [markdown]
 # # Functions
+
+# %%
+def get_journal_issue(journal_date):
+    # Convert journal_date to datetime.datetime object
+    journal_date = datetime.datetime.fromisoformat(journal_date)
+    
+    # # %w -> Weekday as a decimal number, where 0 is Sunday and 6 is Saturday.
+    journal_date_weekday = int(journal_date.strftime("%w"))
+    assert(journal_date_weekday==6)
+    
+    # Get journal year
+    journal_year = int(journal_date.strftime("%Y"))
+    assert(journal_year>=1900)
+    assert(journal_year<=2999)
+    
+    # Get journal month
+    journal_month = int(journal_date.strftime("%m"))
+    assert(journal_month>=1)
+    assert(journal_month<=12)
+    
+    # Get journal day
+    journal_day = int(journal_date.strftime("%d"))
+    assert(journal_day>=1)
+    assert(journal_day<=31)
+    
+    # Get first day of month
+    first_day_of_month = datetime.datetime(year=journal_year, month=journal_month, day=1)
+    
+    # Get first Saturday of month
+    # # %w -> Weekday as a decimal number, where 0 is Sunday and 6 is Saturday.
+    first_day_weekday = int(first_day_of_month.strftime("%w"))
+    assert(first_day_weekday>=0)
+    assert(first_day_weekday<=6)
+    day_of_first_saturday = 1 + (6-first_day_weekday)
+    assert(day_of_first_saturday>=1)
+    assert(day_of_first_saturday<=31)
+    
+    # Get journal issue
+    # 0-based index
+    # lower numbers correspond to more recent issues
+    journal_issue = (journal_day-day_of_first_saturday)/7
+    assert(journal_issue.is_integer())
+    journal_issue = int(nsat)
+    assert(journal_issue>=0)
+    assert(journal_issue<=4)
+
+    return journal_year, journal_month, journal_issue
+
 
 # %%
 def get_browser(browser_app="firefox", headless_browser=False, geckodriver_path=None):
@@ -181,10 +205,14 @@ def select_issue(journal_year, journal_month, journal_issue):
 
 # %%
 logging.basicConfig(force=True, level=logging.INFO,
-                   format="[%(asctime)s] [%(filename)s]->[%(funcName)s] [%(levelname)s] %(message)s")
+                   format="[%(asctime)s] [%(filename)s:%(funcName)s] [%(levelname)s] %(message)s")
 
 # %%
 logging.info("Start")
+
+# %%
+journal_year, journal_month, journal_issue = get_journal_issue(journal_date)
+logging.info(f"Downloading year {journal_year}, month {journal_month}, issue n. {journal_issue}")
 
 # %% [markdown]
 # Open web browser
