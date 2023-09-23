@@ -15,37 +15,40 @@
 # %%
 # #!/usr/bin/env python
 
-# %% language="sh"
-# which python3
+# %%
+import sys
+sys.executable
 
 # %%
+import datetime
+import itertools
+import json
+import logging
+import os
+import random
+import re
+import shutil
+import subprocess
+import time
+import typing
+
+from pathlib import Path
+import pandas as pd
+import requests
+from borb.pdf import PDF, Document
+from natsort import natsorted
+
 from selenium import webdriver
+from selenium.common.exceptions import (NoSuchElementException,
+                                        TimeoutException,
+                                        UnexpectedAlertPresentException)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.common.exceptions import TimeoutException, UnexpectedAlertPresentException, NoSuchElementException
 from selenium.webdriver.support.select import Select
-
-# %%
-from pathlib import Path
-import subprocess
-from natsort import natsorted
-import requests
-import pandas as pd
-import logging
-import itertools
-import time
-import json
-import re
-import os
-import datetime
-import shutil
-import pdfbookmarker
-import random
+from selenium.webdriver.support.wait import WebDriverWait
 from tqdm.notebook import tqdm
-import typing
-from borb.pdf import Document
-from borb.pdf import PDF
+
+import pdfbookmarker
 
 # %% [markdown]
 # # Config
@@ -225,6 +228,7 @@ browser = get_browser(browser_app, headless_browser)
 
 # %%
 from mylogin import mylogin
+
 mylogin(browser, datadir)
 
 # %% [markdown]
