@@ -35,7 +35,8 @@ import typing
 from pathlib import Path
 import pandas as pd
 import requests
-from borb.pdf import PDF, Document
+from borb.pdf import PDF, Document, Page, SingleColumnLayout, PageLayout, Image
+from decimal import Decimal
 from natsort import natsorted
 
 from selenium import webdriver
@@ -54,14 +55,22 @@ import pdfbookmarker
 # # Config
 
 # %%
-proquest_url = "https://www.proquest.com/publication/41716"
+# Publication ID of "The Economist"
+known_publication_ids = {
+    "The Economist": "41716",
+    "MIT Technology Review": "35850"
+}
+
+publication_id = known_publication_ids["MIT Technology Review"]
+
+proquest_url = f"https://www.proquest.com/publication/{publication_id}"
 
 browser_app = "firefox"
-geckodriver_path = Path(os.environ["HOME"])/".local"/"bin"/"geckodriver"
+geckodriver_path = Path("/usr/bin/geckodriver")
 assert(geckodriver_path.is_file())
-headless_browser = True
+headless_browser = False
 
-continue_download = False
+continue_download = True
 
 datadir = Path("../data").resolve()
 downloaddir = datadir/"download"
@@ -69,71 +78,45 @@ artdir = downloaddir/"articles"
 pagesdir = downloaddir/"pages"
 tocdir = downloaddir/"toc"
 
-#journal_date = "2023-09-23"
-journal_date = datetime.datetime.today().strftime("%Y-%m-%d")
+journal_latest = True
+journal_year = None
+journal_month = None
+journal_issue = None
+
+# only needed for "MIT Technology Review"
+journal_cover_url = "https://wp.technologyreview.com/wp-content/uploads/2023/08/SO23-front_cover2.png"
 
 sleep_time = (5, 15)
 
 # %%
+assert(type(journal_latest)==bool)
+if not journal_latest:
+    assert(journal_year>=1900)
+    assert(journal_year<=2999)
+    assert(journal_month>=1)
+    assert(journal_month<=12)
+    assert(journal_day>=1)
+    assert(journal_day<=31)
+    assert(journal_issue>=0)
+    assert(journal_issue<=4)
+else:
+    assert(journal_year is None)
+    assert(journal_month is None)
+    assert(journal_issue is None)
+
+# %%
 assert(datadir.is_dir())
 if downloaddir.is_dir() and (not continue_download):
+    logging.info(f"Removing previous download directory: {downloaddir}")
     shutil.rmtree(downloaddir)
 downloaddir.mkdir(parents=True, exist_ok=continue_download)
-artdir.mkdir(parents=True, exist_ok=True)
-pagesdir.mkdir(parents=True, exist_ok=True)
-tocdir.mkdir(parents=True, exist_ok=True)
+artdir.mkdir(parents=True, exist_ok=continue_download)
+pagesdir.mkdir(parents=True, exist_ok=continue_download)
+tocdir.mkdir(parents=True, exist_ok=continue_download)
 
 
 # %% [markdown]
 # # Functions
-
-# %%
-def get_journal_issue(journal_date):
-    # Convert journal_date to datetime.datetime object
-    journal_date = datetime.datetime.fromisoformat(journal_date)
-    
-    # # %w -> Weekday as a decimal number, where 0 is Sunday and 6 is Saturday.
-    journal_date_weekday = int(journal_date.strftime("%w"))
-    assert(journal_date_weekday==6)
-    
-    # Get journal year
-    journal_year = int(journal_date.strftime("%Y"))
-    assert(journal_year>=1900)
-    assert(journal_year<=2999)
-    
-    # Get journal month
-    journal_month = int(journal_date.strftime("%m"))
-    assert(journal_month>=1)
-    assert(journal_month<=12)
-    
-    # Get journal day
-    journal_day = int(journal_date.strftime("%d"))
-    assert(journal_day>=1)
-    assert(journal_day<=31)
-    
-    # Get first day of month
-    first_day_of_month = datetime.datetime(year=journal_year, month=journal_month, day=1)
-    
-    # Get first Saturday of month
-    # # %w -> Weekday as a decimal number, where 0 is Sunday and 6 is Saturday.
-    first_day_weekday = int(first_day_of_month.strftime("%w"))
-    assert(first_day_weekday>=0)
-    assert(first_day_weekday<=6)
-    day_of_first_saturday = 1 + (6-first_day_weekday)
-    assert(day_of_first_saturday>=1)
-    assert(day_of_first_saturday<=31)
-    
-    # Get journal issue
-    # 0-based index
-    # lower numbers correspond to more recent issues
-    journal_issue = (journal_day-day_of_first_saturday)/7
-    assert(journal_issue.is_integer())
-    journal_issue = int(nsat)
-    assert(journal_issue>=0)
-    assert(journal_issue<=4)
-
-    return journal_year, journal_month, journal_issue
-
 
 # %%
 def get_browser(browser_app="firefox", headless_browser=False, geckodriver_path=None):
@@ -213,10 +196,6 @@ logging.basicConfig(force=True, level=logging.INFO,
 # %%
 logging.info("Start")
 
-# %%
-journal_year, journal_month, journal_issue = get_journal_issue(journal_date)
-logging.info(f"Downloading year {journal_year}, month {journal_month}, issue n. {journal_issue}")
-
 # %% [markdown]
 # Open web browser
 
@@ -228,13 +207,13 @@ browser = get_browser(browser_app, headless_browser)
 
 # %%
 from mylogin import mylogin
-
 mylogin(browser, datadir)
 
 # %% [markdown]
 # Connect to ProQuest website
 
 # %%
+logging.info(f"Conneting to ProQuest URL={proquest_url}")
 browser.get(proquest_url)
 time.sleep(5)
 
@@ -250,6 +229,11 @@ except NoSuchElementException:
 else:
     el.click()
     time.sleep(3)
+
+# %%
+css = "div#pubContentSummaryFormZone > div.row > div.contentSummaryHeader > h1"
+publication_name = browser.find_element(By.CSS_SELECTOR, css).text.strip()
+logging.info(f"publication_name='{publication_name}'")
 
 # %% [markdown]
 # Select issue to download
@@ -278,10 +262,18 @@ while True:
 # Get date in which the issue was released
 
 # %%
-issue_date = browser.find_element(By.CSS_SELECTOR, "select#issueSelected")
-issue_date = issue_date.text
-issue_date = issue_date.split(";")[0].strip()
-issue_date = datetime.datetime.strptime(issue_date, '%b %d, %Y').date()
+issue_date_select = browser.find_element(By.CSS_SELECTOR, "select#issueSelected")
+issue_date_select = Select(issue_date_select)
+issue_date = issue_date_select.first_selected_option.text.strip()
+if publication_id == known_publication_ids["The Economist"]:
+    issue_date = issue_date.split(";")[0].strip()
+    issue_date = datetime.datetime.strptime(issue_date, '%b %d, %Y').date()
+elif publication_id == known_publication_ids["MIT Technology Review"]:
+    month = datetime.datetime.strptime(issue_date[0:3], "%b").date().month
+    year = int(issue_date.split()[1][:-1])
+    issue_date = datetime.date(year=year, month=month, day=1)
+else:
+    raise Exception("We miss logic for issue date for this publication :(")
 logging.info(f"issue_date={issue_date}")
 
 # %% [markdown]
@@ -289,7 +281,8 @@ logging.info(f"issue_date={issue_date}")
 
 # %%
 ts = issue_date.strftime("%Y-%m-%d")
-finalfp = datadir/"final"/("TheEconomist-"+ts+".pdf")
+pnamecl = publication_name.replace(" ","").strip()
+finalfp = datadir/"final"/(pnamecl+"-"+ts+".pdf")
 assert(not finalfp.is_file())
 
 # %% [markdown]
@@ -302,22 +295,28 @@ all_pdfurls = list()
 toc = False
 result_items = list(browser.find_elements(By.CSS_SELECTOR, "li.resultItem.ltr"))
 
-# %%
 for result_item in tqdm(result_items):
     
     title = result_item.find_element(By.CSS_SELECTOR, "div.truncatedResultsTitle").text.strip()
-    
-    if title != "Table of Contents":
-        # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
-        loc = result_item.find_element(By.CSS_SELECTOR, "span.jnlArticle").text
+    if title == "Table of Contents":
+        toc = True
+    # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
+    loc = result_item.find_element(By.CSS_SELECTOR, "span.jnlArticle").text
+
+    # Try to extract pages from loc
+    try:
         pages = re.match(".*:(.*)", loc).group(1).replace(".","")
         pages = re.sub(",\s+","-",pages).strip()
-    else:    
-        # Table of Contents has no page number
-        # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023)."
-        pages = "toc"
-        toc = True
-    
+    except:
+        if title == "Table of Contents":
+            # Table of Contents has no page number
+            # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023)."
+            pages = "toc"
+        else:
+            pages = "na"
+
+    # Extract URL of PDF files
+    # if we don't have a PDF file, skip it
     try:
         pdfurl = result_item.find_element(By.CSS_SELECTOR, "a.format_pdf").get_attribute("href")
     except NoSuchElementException:
@@ -377,7 +376,33 @@ for pdfi, pdfurl in tqdm(enumerate(all_pdfurls), total=len(all_pdfurls)):
 browser.close()
 
 # %% [markdown]
+# Remove CropBox
+
+# %%
+pagesfns = natsorted(list(artdir.iterdir()))
+for pagesfn in pagesfns:
+    # Create text editor-friendly PDF file
+    # https://qpdf.readthedocs.io/en/stable/cli.html#option-qdf
+    cmd = ["qpdf", "--qdf", "--replace-input", str(pagesfn), "--"]
+    res = subprocess.run(cmd)
+    assert(res.returncode==0)
+    # Remove cropbox
+    # https://stackoverflow.com/questions/6451859/rendering-the-whole-media-box-of-a-pdf-page-into-a-png-file-using-ghostscript
+    cmd = ["sed", "-i", "-e", "/CropBox/,/]/s#.# #g", str(pagesfn)]
+    #logging.info(cmd)
+    res = subprocess.run(cmd)
+    assert(res.returncode==0)
+
+
+# %% [markdown]
 # Get size of a PDF page
+
+# %%
+def dpi_to_cm(dpi):
+    dpi_to_inch = 1/72
+    inch_to_cm = 2.54
+    return float(dpi) * dpi_to_inch * inch_to_cm
+
 
 # %%
 # read PDF
@@ -388,21 +413,21 @@ with open(fn, "rb") as in_file_handle:
     doc = PDF.loads(in_file_handle)
 # check whether we have read a Document
 assert doc is not None
-# get the width/height
-w = doc.get_page(0).get_page_info().get_width()
-h = doc.get_page(0).get_page_info().get_height()
-pdf_page_size = [w,h]
-
-# %%
-logging.info(f"Page width={pdf_page_size[0]}; Page height={pdf_page_size[1]}")
-logging.info(f"Page width={type(pdf_page_size[0])}; Page height={type(pdf_page_size[1])}")
-logging.info(f"Page width={str(pdf_page_size[0])}; Page height={str(pdf_page_size[1])}")
+# get page size in "default user space units"
+pdf_page_size_dpi = doc.get_page(0).get_page_info().get_size()
+pdf_page_size_cm = [dpi_to_cm(x) for x in pdf_page_size_dpi]
+logging.info(f"Page size dpi = {pdf_page_size_dpi}")
+logging.info(f"Page size cm = {pdf_page_size_cm}")
 
 # %% [markdown]
 # If we have TOC, get page number and rename
 
 # %%
-if toc:
+if publication_id == known_publication_ids["The Economist"] and \
+   toc:
+    logging.info("The Economist doesn't provide " \
+                 "page numbers for Table Of Contents. " \
+                 "Getting them from PDF file ...")
     tocpdf = tocdir/("pages_toc.pdf")
     assert(tocpdf.is_file())
     cmd = ["pdftotext", str(tocpdf)]
@@ -431,6 +456,7 @@ if toc:
 
 # %%
 if not toc:
+    logging.info("We don't have a Table Of Contents. Generating our own ...")
     tocmdfile = tocdir/"toc.md"
     tocpdffile = tocmdfile.parent/(tocmdfile.stem+".pdf")
     fh = open(tocmdfile, "w", encoding="utf8")
@@ -449,14 +475,40 @@ if not toc:
     assert(ret.returncode==0)
     shutil.move(tocpdffile, artdir/"pages_2-3.pdf")
 
+
 # %% [markdown]
-# Split pages
+# Split single pages from original PDF files
+
+# %%
+def convert_page_range(this_pages):
+    # Convert a-b into a,a+1,a+2,...,b-2,b-1,b
+    while res := re.search("(\d+)-(\d+)", this_pages):
+        #logging.info(f"{res.start()}, {res.end()}")
+        #logging.info(f"{res.group(1)}, {res.group(2)}")
+        start = int(res.group(1))
+        end = int(res.group(2))
+        seq = [str(x) for x in range(start,end+1)]
+        this_pages = this_pages[:res.start()] + \
+            ",".join(seq) + \
+            this_pages[res.end():]
+    return this_pages
+
+
+# %%
+def get_pages_from_file(pagesfn):
+    this_pages = re.search(".*?pages_(.*)\.pdf", str(pagesfn)).group(1)
+    this_pages = convert_page_range(this_pages)
+    return this_pages
+
 
 # %%
 pagesfns = natsorted(list(artdir.iterdir()))
 for pagesfn in pagesfns:
-    this_pages = re.search(".*?pages_(.*)\.pdf", str(pagesfn)).group(1)
-    for this_page_i, this_page in enumerate(this_pages.split("-")):
+    logging.info(f"pagesfn={pagesfn.stem}")
+    this_pages = get_pages_from_file(pagesfn)
+    logging.info(f"this_pages={this_pages}")
+    # Split pages across commas ","
+    for this_page_i, this_page in enumerate(this_pages.split(",")):
         outfn = pagesdir/("pages_"+this_page+".pdf")
         cmd = ["qpdf", "--empty", 
                "--pages", str(pagesfn), str(this_page_i+1),
@@ -469,10 +521,13 @@ for pagesfn in pagesfns:
 
 # %%
 whitepdf = downloaddir/"blank.pdf"
-cmd = ["convert",
-       list(artdir.iterdir())[1],
+guineafp = natsorted(list(artdir.iterdir()))[0]
+logging.info(f"Using {guineafp}")
+cmd = ["magick", "convert",
+       str(guineafp),
        "-fill", "white", "-colorize", "100",
        str(whitepdf)]
+logging.info(f"Running {cmd}")
 ret = subprocess.run(cmd)
 assert(ret.returncode==0)
 
@@ -481,7 +536,7 @@ assert(ret.returncode==0)
 
 # %%
 pages_we_have = [str(x) for x in artdir.iterdir()]
-pages_we_have = [re.search(".*?pages_(.*)\.pdf$",x).group(1).split("-") for x in pages_we_have]
+pages_we_have = [get_pages_from_file(x).split(",") for x in pages_we_have]
 pages_we_have = list(itertools.chain(*pages_we_have))
 pages_we_have = [int(x) for x in pages_we_have]
 pages_we_have.sort()
@@ -495,34 +550,64 @@ for i in range(1,max(pages_we_have)+1):
 # Download cover
 
 # %%
-ts = issue_date.strftime("%Y%m%d")
-url = f"https://www.economist.com/img/b/1280/1684/90/media-assets/image/{ts}_DE_EU.jpg"
-
-data = requests.get(url).content
-with open(downloaddir/"cover.jpg","wb") as fh:
+if publication_id==known_publication_ids["The Economist"]:
+    # Download cover from the web
+    ts = issue_date.strftime("%Y%m%d")
+    journal_cover_url = f"https://www.economist.com/img/b/1280/1684/90" \
+          f"/media-assets/image/{ts}_DE_EU.jpg"
+data = requests.get(journal_cover_url).content
+ext = journal_cover_url.split(".")[-1]
+logging.info(f"ext={ext}")
+coverfp = downloaddir/("cover."+ext)
+logging.info(f"coverfp={coverfp}")
+with open(coverfp,"wb") as fh:
     fh.write(data)
 
-# %%
-#pt_to_inch = 0.0138888889
-#pdf_page_size_pix = list()
-#for m in pdf_page_size:
-#    m2 = float(m)*pt_to_inch*72
-#    pdf_page_size_pix.append(m2)
-#pages_we_have(pdf_page_size)
-#pages_we_have(pdf_page_size_pix)
-
 # %% [markdown]
-# Convert cover from JPG to PDF
+# Remove the white page we have instead of the cover
 
 # %%
 page1fn = (pagesdir/"pages_1.pdf")
 if page1fn.is_file():
     page1fn.unlink()
 
-cmd = ["magick", "convert", downloaddir/"cover.jpg", "-page", str(w)+"x"+str(h)+"!", str(page1fn)]
+# %%
+# Resize cover
+coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
+magick_page_size = str(pdf_page_size_dpi[0]) + "x" + str(pdf_page_size_dpi[1]) + "!"
+cmd = ["magick", "convert",
+       str(coverfp),
+       "-resize", magick_page_size,
+       str(coverfp2)]
 logging.info(f"Command to convert cover from JPG to PDF: '{cmd}'")
 ret = subprocess.run(cmd)
 assert(ret.returncode==0)
+
+# %%
+# create Document
+doc: Document = Document()
+
+# create Page
+page: Page = Page(width=pdf_page_size_dpi[0], height=pdf_page_size_dpi[1])
+
+# add Page to Document
+doc.add_page(page)
+
+# set a PageLayout
+layout: PageLayout = SingleColumnLayout(page)
+
+# add an Image
+layout.add(
+    Image(
+        coverfp,
+        width=page.get_page_info().get_width() / 2,
+        height=page.get_page_info().get_height() / 2
+    )
+)
+
+# store
+with open(page1fn, "wb") as pdf_file_handle:
+    PDF.dumps(pdf_file_handle, doc)
 
 # %% [markdown]
 # Merge pages
@@ -531,7 +616,7 @@ assert(ret.returncode==0)
 cmd = ["qpdf", "--empty", "--pages"]
 cmd += [str(x) for x in natsorted(pagesdir.iterdir())]
 cmd += ["--", str(downloaddir/"output.pdf")]
-logging.info(f"Command to merge pages: '{cmd}'")
+#logging.info(f"Command to merge pages: '{cmd}'")
 ret = subprocess.run(cmd)
 assert(ret.returncode==0)
 
@@ -569,3 +654,5 @@ shutil.move(outfn, finalfp)
 
 # %%
 logging.info("Ended")
+
+# %%
