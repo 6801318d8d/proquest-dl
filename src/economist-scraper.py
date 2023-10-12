@@ -13,13 +13,7 @@
 # ---
 
 # %%
-# #!/usr/bin/env python
-
-# %%
 import sys
-sys.executable
-
-# %%
 import datetime
 import itertools
 import json
@@ -35,7 +29,13 @@ import typing
 from pathlib import Path
 import pandas as pd
 import requests
-from borb.pdf import PDF, Document, Page, SingleColumnLayout, PageLayout, Image
+
+from borb.pdf.canvas.geometry.rectangle import Rectangle
+from borb.pdf import Document
+from borb.pdf import PDF, Page, SingleColumnLayout, PageLayout, Image, MultiColumnLayout
+from borb.toolkit import LocationFilter
+from borb.toolkit import SimpleTextExtraction
+
 from decimal import Decimal
 from natsort import natsorted
 
@@ -61,7 +61,8 @@ known_publication_ids = {
     "MIT Technology Review": "35850"
 }
 
-publication_id = known_publication_ids["MIT Technology Review"]
+# publication_id = known_publication_ids["MIT Technology Review"]
+publication_id = known_publication_ids["The Economist"]
 
 proquest_url = f"https://www.proquest.com/publication/{publication_id}"
 
@@ -70,12 +71,12 @@ geckodriver_path = Path("/usr/bin/geckodriver")
 assert(geckodriver_path.is_file())
 headless_browser = False
 
-continue_download = True
-
 datadir = Path("../data").resolve()
 downloaddir = datadir/"download"
-artdir = downloaddir/"articles"
-pagesdir = downloaddir/"pages"
+artdir1 = downloaddir/"1_articles"
+artdir2 = downloaddir/"2_articles"
+artdir3 = downloaddir/"3_articles"
+pagesdir = downloaddir/"4_pages"
 tocdir = downloaddir/"toc"
 
 journal_latest = True
@@ -86,7 +87,12 @@ journal_issue = None
 # only needed for "MIT Technology Review"
 journal_cover_url = "https://wp.technologyreview.com/wp-content/uploads/2023/08/SO23-front_cover2.png"
 
-sleep_time = (5, 15)
+sleep_time = (10, 20)
+
+# %%
+# If set to True, existing files will not be deleted
+# before downloading the new ones
+continue_download = True
 
 # %%
 assert(type(journal_latest)==bool)
@@ -108,15 +114,21 @@ else:
 assert(datadir.is_dir())
 if downloaddir.is_dir() and (not continue_download):
     logging.info(f"Removing previous download directory: {downloaddir}")
-    shutil.rmtree(downloaddir)
+    #shutil.rmtree(downloaddir)
+    pass
 downloaddir.mkdir(parents=True, exist_ok=continue_download)
-artdir.mkdir(parents=True, exist_ok=continue_download)
+artdir1.mkdir(parents=True, exist_ok=continue_download)
+artdir2.mkdir(parents=True, exist_ok=continue_download)
+artdir3.mkdir(parents=True, exist_ok=continue_download)
 pagesdir.mkdir(parents=True, exist_ok=continue_download)
 tocdir.mkdir(parents=True, exist_ok=continue_download)
 
 
 # %% [markdown]
 # # Functions
+
+# %% [markdown]
+# ## Scraper
 
 # %%
 def get_browser(browser_app="firefox", headless_browser=False, geckodriver_path=None):
@@ -187,6 +199,112 @@ def select_issue(journal_year, journal_month, journal_issue):
 
 
 # %% [markdown]
+# ## PDF
+
+# %%
+def get_page_size(fp):
+    doc: typing.Optional[Document] = None
+    with open(fp, "rb") as in_file_handle:
+        doc = PDF.loads(in_file_handle)
+    # check whether we have read a Document
+    assert doc is not None
+    # get page size in "default user space units"
+    page_size = doc.get_page(0).get_page_info().get_size()
+    return page_size
+
+
+# %%
+def get_number_of_pages(fp):
+    with open(fp, "rb") as in_file_handle:
+        doc = PDF.loads(in_file_handle)
+    return int(doc.get_document_info().get_number_of_pages())
+
+
+# %%
+def get_text_from_top_right_corner(fp, xoffset, yoffset, page_size=None):
+
+    if not page_size:
+        page_size = get_page_size(fp)
+    
+    page_size = [float(x) for x in page_size]
+    
+    x = page_size[0]-xoffset
+    y = page_size[1]-yoffset
+    width = page_size[0]-x
+    height = page_size[1]-y
+    
+    # define the Rectangle of interest
+    r: Rectangle = Rectangle(x, y, width, height)
+
+    # define SimpleTextExtraction
+    l0: SimpleTextExtraction = SimpleTextExtraction()
+
+    # apply a LocationFilter on top of SimpleTextExtraction
+    l1: LocationFilter = LocationFilter(r)
+    l1.add_listener(l0)
+
+    # read the Document
+    doc: typing.Optional[Document] = None
+    with open(fp, "rb") as in_file_handle:
+        doc = PDF.loads(in_file_handle, [l1])
+
+    # check whether we have read a Document
+    assert doc is not None
+
+    # print the text inside the Rectangle of interest
+    return(l0.get_text()[0])
+
+
+# %%
+def remove_last_page_borb(infp, outfp):
+    doc: typing.Optional[Document] = None
+    with open(infp, "rb") as pdf_file_handle:
+        doc = PDF.loads(pdf_file_handle)
+    assert doc is not None
+    npages = int(doc.get_document_info().get_number_of_pages())
+    doc.pop_page(npages-1)
+    with open(outfp, "wb") as pdf_file_handle:
+        PDF.dumps(pdf_file_handle, doc)
+
+
+# %%
+def remove_last_page(infp, outfp):
+    cmd = ["qpdf", "--empty", "--pages", str(infp), "1-r2", "--", str(outfp)]
+    res = subprocess.run(cmd)
+    assert(res.returncode==0)
+
+
+# %%
+def remove_crop_box_borb(infp, outfp):
+    npages = get_number_of_pages(infp)
+    doc: typing.Optional[Document] = None
+    with open(infp, "rb") as pdf_file_handle:
+        doc = PDF.loads(pdf_file_handle)
+    assert doc is not None
+    for pagen in range(1, npages+1):
+        page_size = doc.get_page(pagen).get_page_info().get_size()
+        cb = [Decimal(0), Decimal(0), page_size[0], page_size[1]]
+        doc['XRef']['Trailer']['Root']['Pages']['Kids'][pagen]['CropBox'] = cb
+    # store Document
+    with open(outfp, "wb") as pdf_file_handle:
+        PDF.dumps(pdf_file_handle, doc)
+
+
+# %%
+def remove_crop_box(infp, outfp):
+    # https://stackoverflow.com/questions/6451859/rendering-the-whole-media-box-of-a-pdf-page-into-a-png-file-using-ghostscript
+    # qpdf --qdf input.pdf output.pdf
+    cmd = ["qpdf", "--qdf", str(infp), str(outfp)]
+    res = subprocess.run(cmd)
+    assert(res.returncode==0)
+    cmd = ["sed", "-i.bak", "-e", "/CropBox/,/]/s#.# #g", str(outfp)]
+    res = subprocess.run(cmd)
+    assert(res.returncode==0)
+    bakfp = Path(str(outfp.resolve())+".bak")
+    bakfp.unlink()
+
+
+# %% [markdown]
 # # Main
 
 # %%
@@ -195,6 +313,9 @@ logging.basicConfig(force=True, level=logging.INFO,
 
 # %%
 logging.info("Start")
+
+# %%
+logging.info(sys.executable)
 
 # %% [markdown]
 # Open web browser
@@ -229,6 +350,9 @@ except NoSuchElementException:
 else:
     el.click()
     time.sleep(3)
+
+# %% [markdown]
+# Get publication name
 
 # %%
 css = "div#pubContentSummaryFormZone > div.row > div.contentSummaryHeader > h1"
@@ -306,7 +430,7 @@ for result_item in tqdm(result_items):
     # Try to extract pages from loc
     try:
         pages = re.match(".*:(.*)", loc).group(1).replace(".","")
-        pages = re.sub(",\s+","-",pages).strip()
+        pages = re.sub("\s+","",pages).strip()
     except:
         if title == "Table of Contents":
             # Table of Contents has no page number
@@ -337,7 +461,7 @@ for pdfi, pdfurl in tqdm(enumerate(all_pdfurls), total=len(all_pdfurls)):
 
     # Generate PDF file name
     if this_pages != "toc":
-        pdffn = artdir/("pages_"+this_pages+".pdf")
+        pdffn = artdir1/("pages_"+this_pages+".pdf")
     else:
         pdffn = tocdir/("pages_"+this_pages+".pdf")
     if pdffn.is_file():
@@ -361,11 +485,6 @@ for pdfi, pdfurl in tqdm(enumerate(all_pdfurls), total=len(all_pdfurls)):
     with open(pdffn, "wb") as fh:
         fh.write(data)
 
-    # Remove last page with copyright notice
-    cmd = ["qpdf", str(pdffn), "--replace-input", "--pages", str(pdffn), "1-r2", "--"]
-    res = subprocess.run(cmd)
-    assert(res.returncode==0)
-
     # Sleep to prevent captcha
     time.sleep(random.uniform(*sleep_time))
 
@@ -376,79 +495,47 @@ for pdfi, pdfurl in tqdm(enumerate(all_pdfurls), total=len(all_pdfurls)):
 browser.close()
 
 # %% [markdown]
-# Remove CropBox
+# Remove last page with copyright notice
 
 # %%
-pagesfns = natsorted(list(artdir.iterdir()))
-for pagesfn in pagesfns:
-    # Create text editor-friendly PDF file
-    # https://qpdf.readthedocs.io/en/stable/cli.html#option-qdf
-    cmd = ["qpdf", "--qdf", "--replace-input", str(pagesfn), "--"]
-    res = subprocess.run(cmd)
-    assert(res.returncode==0)
-    # Remove cropbox
-    # https://stackoverflow.com/questions/6451859/rendering-the-whole-media-box-of-a-pdf-page-into-a-png-file-using-ghostscript
-    cmd = ["sed", "-i", "-e", "/CropBox/,/]/s#.# #g", str(pagesfn)]
-    #logging.info(cmd)
-    res = subprocess.run(cmd)
-    assert(res.returncode==0)
+for infp in artdir1.iterdir():
+    outfp = artdir2/(infp.name)
+    remove_last_page(infp, outfp)
 
+# %% [markdown]
+# Remove CropBox from PDF files
+
+# %%
+for infp in artdir2.iterdir():
+    outfp = artdir3/(infp.name)
+    remove_crop_box(infp, outfp)
 
 # %% [markdown]
 # Get size of a PDF page
 
 # %%
-def dpi_to_cm(dpi):
-    dpi_to_inch = 1/72
-    inch_to_cm = 2.54
-    return float(dpi) * dpi_to_inch * inch_to_cm
-
-
-# %%
-# read PDF
-fn = next(artdir.iterdir())
+fn = next(artdir3.iterdir())
 logging.info(f"Using fn='{fn}'")
-doc: typing.Optional[Document] = None
-with open(fn, "rb") as in_file_handle:
-    doc = PDF.loads(in_file_handle)
-# check whether we have read a Document
-assert doc is not None
-# get page size in "default user space units"
-pdf_page_size_dpi = doc.get_page(0).get_page_info().get_size()
-pdf_page_size_cm = [dpi_to_cm(x) for x in pdf_page_size_dpi]
-logging.info(f"Page size dpi = {pdf_page_size_dpi}")
-logging.info(f"Page size cm = {pdf_page_size_cm}")
+pdf_page_size_pt = get_page_size(fn)
 
 # %% [markdown]
 # If we have TOC, get page number and rename
 
 # %%
-if publication_id == known_publication_ids["The Economist"] and \
-   toc:
-    logging.info("The Economist doesn't provide " \
-                 "page numbers for Table Of Contents. " \
-                 "Getting them from PDF file ...")
+is_economist = publication_id == known_publication_ids["The Economist"]
+if is_economist and toc:
+    logging.info("Getting page number from PDF")
     tocpdf = tocdir/("pages_toc.pdf")
-    assert(tocpdf.is_file())
-    cmd = ["pdftotext", str(tocpdf)]
-    ret = subprocess.run(cmd)
-    assert(ret.returncode==0)
-    toctxt = tocdir/("pages_toc.txt")
-    assert(toctxt.is_file())
-    with open(toctxt, "r") as fh:
-        toctext = fh.read()
-    page_start = min([int(x) for x in re.findall("^\d$",toctext,re.MULTILINE)])
+    page_start = get_text_from_top_right_corner(tocpdf, 40, 50, pdf_page_size_pt)
+    page_start = int(page_start)
+    assert(0 < page_start <= 10)
     logging.info(f"TOC starting page: {page_start}")
-    assert(page_start>0)
-    toctxt.unlink()
-    pdfinfo = subprocess.run(["pdfinfo", str(tocpdf)], capture_output=True, text=True).stdout
-    npages = re.search("^Pages:(.*)$", pdfinfo, re.M).group(1).strip()
-    npages = int(npages)
-    assert(npages>0)
-    logging.info(f"TOC consists of {npages} pages")
-    this_pages = str(page_start) + "-" + str(page_start+npages-1)
-    logging.info(f"TOC cover pages {this_pages}")
-    pdffn = artdir/("pages_"+this_pages+".pdf")
+    npages = get_number_of_pages(tocpdf)
+    assert(0 < npages <= 5)
+    logging.info(f"TOC number of pages: {npages}")
+    page_range = ",".join([str(x) for x in range(page_start, page_start+npages)])
+    logging.info(f"TOC page range: {page_range}")
+    pdffn = artdir3/(f"pages_{page_range}.pdf")
     shutil.copy(tocpdf, pdffn)
 
 # %% [markdown]
@@ -467,17 +554,17 @@ if not toc:
     cmd = ["pandoc",
            "-f", "markdown",
            "-t", "pdf",
-           "-V", "geometry:papersize={" + pdf_page_size[0] + "pt, " + pdf_page_size[1] + "pt}",
+           "-V", "geometry:papersize={" + pdf_page_size_pt[0] + "pt, " + pdf_page_size_pt[1] + "pt}",
            str(tocmdfile),
            "-o", str(tocpdffile)]
     logging.info(f"Command to convert self-generated TOC from Markdown to PDF: '{cmd}'")
     ret = subprocess.run(cmd)
     assert(ret.returncode==0)
-    shutil.move(tocpdffile, artdir/"pages_2-3.pdf")
+    shutil.move(tocpdffile, artdir3/"pages_2-3.pdf")
 
 
 # %% [markdown]
-# Split single pages from original PDF files
+# Extract single pages from original PDF files
 
 # %%
 def convert_page_range(this_pages):
@@ -502,13 +589,14 @@ def get_pages_from_file(pagesfn):
 
 
 # %%
-pagesfns = natsorted(list(artdir.iterdir()))
+pagesfns = natsorted(list(artdir3.iterdir()))
 for pagesfn in pagesfns:
     logging.info(f"pagesfn={pagesfn.stem}")
     this_pages = get_pages_from_file(pagesfn)
     logging.info(f"this_pages={this_pages}")
     # Split pages across commas ","
     for this_page_i, this_page in enumerate(this_pages.split(",")):
+        # Extract a single page
         outfn = pagesdir/("pages_"+this_page+".pdf")
         cmd = ["qpdf", "--empty", 
                "--pages", str(pagesfn), str(this_page_i+1),
@@ -521,21 +609,17 @@ for pagesfn in pagesfns:
 
 # %%
 whitepdf = downloaddir/"blank.pdf"
-guineafp = natsorted(list(artdir.iterdir()))[0]
-logging.info(f"Using {guineafp}")
-cmd = ["magick", "convert",
-       str(guineafp),
-       "-fill", "white", "-colorize", "100",
-       str(whitepdf)]
-logging.info(f"Running {cmd}")
-ret = subprocess.run(cmd)
-assert(ret.returncode==0)
+doc: Document = Document()
+page: Page = Page(width=pdf_page_size_pt[0], height=pdf_page_size_pt[1])
+doc.add_page(page)
+with open(whitepdf, "wb") as pdf_file_handle:
+    PDF.dumps(pdf_file_handle, doc)
 
 # %% [markdown]
 # Put white pages where needed
 
 # %%
-pages_we_have = [str(x) for x in artdir.iterdir()]
+pages_we_have = [str(x) for x in artdir3.iterdir()]
 pages_we_have = [get_pages_from_file(x).split(",") for x in pages_we_have]
 pages_we_have = list(itertools.chain(*pages_we_have))
 pages_we_have = [int(x) for x in pages_we_have]
@@ -571,46 +655,61 @@ page1fn = (pagesdir/"pages_1.pdf")
 if page1fn.is_file():
     page1fn.unlink()
 
+# %% [markdown]
+# Resize cover page size
+
 # %%
-# Resize cover
 coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
-magick_page_size = str(pdf_page_size_dpi[0]) + "x" + str(pdf_page_size_dpi[1]) + "!"
+magick_page_size = str(pdf_page_size_pt[0]) + "x" + str(pdf_page_size_pt[1]) + "!"
 cmd = ["magick", "convert",
        str(coverfp),
        "-resize", magick_page_size,
        str(coverfp2)]
-logging.info(f"Command to convert cover from JPG to PDF: '{cmd}'")
+logging.info(f"Command to resize cover page: '{cmd}'")
 ret = subprocess.run(cmd)
 assert(ret.returncode==0)
 
+
+# %% [markdown]
+# Convert cover page to PDF
+
 # %%
-# create Document
+class FullPageLayout(MultiColumnLayout):
+    def __init__(self, page: "Page"):
+        w: typing.Optional[Decimal] = page.get_page_info().get_width()
+        h: typing.Optional[Decimal] = page.get_page_info().get_height()
+        assert w is not None
+        assert h is not None
+        super().__init__(
+            page=page,
+            column_widths=[w],
+            footer_paint_method=None,
+            header_paint_method=None,
+            inter_column_margins=[],
+            margin_bottom=Decimal(0),
+            margin_left=Decimal(0),
+            margin_right=Decimal(0),
+            margin_top=Decimal(0),
+        )
+
+
+# %%
 doc: Document = Document()
-
-# create Page
-page: Page = Page(width=pdf_page_size_dpi[0], height=pdf_page_size_dpi[1])
-
-# add Page to Document
-doc.add_page(page)
-
-# set a PageLayout
-layout: PageLayout = SingleColumnLayout(page)
-
-# add an Image
+page: Page = Page(width=pdf_page_size_pt[0], height=pdf_page_size_pt[1])
+layout: PageLayout = FullPageLayout(page)
 layout.add(
     Image(
         coverfp,
-        width=page.get_page_info().get_width() / 2,
-        height=page.get_page_info().get_height() / 2
+        width=pdf_page_size_pt[0],
+        height=pdf_page_size_pt[1]
     )
 )
-
-# store
+doc.add_page(page)
 with open(page1fn, "wb") as pdf_file_handle:
     PDF.dumps(pdf_file_handle, doc)
 
 # %% [markdown]
-# Merge pages
+# Merge pages into final PDF file
 
 # %%
 cmd = ["qpdf", "--empty", "--pages"]
@@ -637,7 +736,7 @@ pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
 infn.unlink()
 
 # %% [markdown]
-# Compress
+# Compress final PDF file
 
 # %%
 infn = outfn
@@ -654,5 +753,3 @@ shutil.move(outfn, finalfp)
 
 # %%
 logging.info("Ended")
-
-# %%
