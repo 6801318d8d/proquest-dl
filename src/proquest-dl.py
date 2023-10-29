@@ -85,10 +85,12 @@ artdir3 = downloaddir / "3_articles"
 pagesdir = downloaddir / "4_pages"
 tocdir = downloaddir / "toc"
 
-journal_latest = True
-journal_year = None
-journal_month = None
-journal_issue = None
+journal_latest = False
+journal_year = 2023
+journal_month = 10
+# Most recent issue has index 0
+# Increasing the issue leads to less recent issues
+journal_issue = 1
 
 # only needed for "MIT Technology Review"
 journal_cover_url = (
@@ -109,8 +111,6 @@ if not journal_latest:
     assert journal_year <= 2999
     assert journal_month >= 1
     assert journal_month <= 12
-    assert journal_day >= 1
-    assert journal_day <= 31
     assert journal_issue >= 0
     assert journal_issue <= 4
 else:
@@ -380,7 +380,8 @@ def select_issue(journal_year, journal_month, journal_issue):
     except NoSuchElementException:
         raise Exception(f"Cannot find month select box")
     select = Select(select_element)
-    select.select_by_visible_text(str(journal_month))
+    month_locale_full_name = datetime.date(year=1, month=journal_month, day=1).strftime("%B")
+    select.select_by_visible_text(month_locale_full_name)
 
     # Select issue
     try:
