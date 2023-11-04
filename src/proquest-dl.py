@@ -28,12 +28,11 @@ import subprocess
 import sys
 import time
 import typing
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from dataclasses import dataclass, field
 
 import pandas as pd
-import requests
 from borb.pdf import (
     PDF,
     Document,
@@ -46,19 +45,13 @@ from borb.pdf import (
 from borb.pdf.canvas.geometry.rectangle import Rectangle
 from borb.toolkit import LocationFilter, SimpleTextExtraction
 from natsort import natsorted
-from selenium import webdriver
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    TimeoutException,
-    UnexpectedAlertPresentException,
-)
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.select import Select
-from selenium.webdriver.support.wait import WebDriverWait
+
 from tqdm.notebook import tqdm
 
 import pdfbookmarker
+
+from Issue import Issue
+from ProQuestWebScraper import ProQuestWebScraper
 
 # %% [markdown]
 # # Config
@@ -85,12 +78,12 @@ artdir3 = downloaddir / "3_articles"
 pagesdir = downloaddir / "4_pages"
 tocdir = downloaddir / "toc"
 
-journal_latest = False
-journal_year = 2023
-journal_month = 10
+journal_latest = True
+journal_year = None
+journal_month = None
 # Most recent issue has index 0
 # Increasing the issue leads to less recent issues
-journal_issue = 1
+journal_issue = None
 
 # only needed for "MIT Technology Review"
 journal_cover_url = (
@@ -103,6 +96,7 @@ sleep_time = (10, 20)
 # If set to True, existing files will not be deleted
 # before downloading the new ones
 continue_download = False
+delete_existing = True
 
 # %%
 assert type(journal_latest) == bool
@@ -120,10 +114,9 @@ else:
 
 # %%
 assert datadir.is_dir()
-if downloaddir.is_dir() and (not continue_download):
+if downloaddir.is_dir() and (not continue_download) and delete_existing:
     logging.info(f"Removing previous download directory: {downloaddir}")
-    # shutil.rmtree(downloaddir)
-    pass
+    shutil.rmtree(downloaddir)
 downloaddir.mkdir(parents=True, exist_ok=continue_download)
 artdir1.mkdir(parents=True, exist_ok=continue_download)
 artdir2.mkdir(parents=True, exist_ok=continue_download)
@@ -140,6 +133,7 @@ class FullPageLayout(MultiColumnLayout):
     """
     A borb's page layout with no margins
     """
+
     def __init__(self, page: "Page"):
         w: typing.Optional[Decimal] = page.get_page_info().get_width()
         h: typing.Optional[Decimal] = page.get_page_info().get_height()
@@ -158,251 +152,8 @@ class FullPageLayout(MultiColumnLayout):
         )
 
 
-# %%
-@dataclass
-class Article:
-    title:str
-    pages:str
-    pdfurl:str
-
-
-# %%
-@dataclass
-class Issue:
-
-    publication_id:int=0
-    publication_name:str=""
-    articles:list[Article]=field(default_factory=list)
-    page_size:tuple[float, float]=(0,0)
-    toc:bool=False
-
-    def build_final_fp(self, datadir):
-        """
-        Build final file path and check we have not downloaded this issue yet
-        """
-        ts = self.date.strftime("%Y-%m-%d")
-        pnamecl = self.publication_name.replace(" ", "").strip()
-        self.finalfp = datadir / "final" / (pnamecl + "-" + ts + ".pdf")
-        assert not self.finalfp.is_file()
-
-
 # %% [markdown]
 # # Functions
-
-# %% [markdown]
-# ## Scraper
-
-# %%
-def get_issue_date(browser):
-    issue_date_select = browser.find_element(By.CSS_SELECTOR, "select#issueSelected")
-    issue_date_select = Select(issue_date_select)
-    issue_date = issue_date_select.first_selected_option.text.strip()
-    if publication_id == known_publication_ids["The Economist"]:
-        issue_date = issue_date.split(";")[0].strip()
-        issue_date = datetime.datetime.strptime(issue_date, '%b %d, %Y').date()
-    elif publication_id == known_publication_ids["MIT Technology Review"]:
-        month = datetime.datetime.strptime(issue_date[0:3], "%b").date().month
-        year = int(issue_date.split()[1][:-1])
-        issue_date = datetime.date(year=year, month=month, day=1)
-    else:
-        raise Exception("We miss logic for issue date for this publication :(")
-    return issue_date
-
-
-# %%
-def download_article(browser, issue, sleep_time, article):
-    
-    # Generate PDF file name
-    if article.pages != "toc":
-        pdffn = artdir1 / ("pages_" + article.pages + ".pdf")
-    else:
-        pdffn = tocdir / ("pages_" + article.pages + ".pdf")
-    if pdffn.is_file():
-        logging.info(f"Skipping page(s) {article.pages} because already downloaded")
-        return
-    logging.info(f"Downloading pages {article.pages}")
-
-    # Browse to article URL
-    while True:
-        browser.get(article.pdfurl)
-        if check_captcha(browser):
-            continue
-        else:
-            break
-
-    # Get URL of the PDF file
-    pdf_file_url = browser.find_element(
-        By.CSS_SELECTOR, "embed#embedded-pdf"
-    ).get_attribute("src")
-
-    # Download PDF file to local
-    data = requests.get(pdf_file_url).content
-    with open(pdffn, "wb") as fh:
-        fh.write(data)
-
-    # Sleep to prevent captcha
-    time.sleep(random.uniform(*sleep_time))
-
-
-# %%
-def download_articles(browser, issue, sleep_time):
-    for article in tqdm(issue.articles):
-        download_article(browser, issue, sleep_time, article)
-
-
-# %%
-def retrieve_articles_list(browser, issue):
-    """
-    Download list of articles
-    """
-    result_items = list(browser.find_elements(By.CSS_SELECTOR, "li.resultItem.ltr"))
-    
-    for result_item in tqdm(result_items):
-        title = result_item.find_element(
-            By.CSS_SELECTOR, "div.truncatedResultsTitle"
-        ).text.strip()
-        if title == "Table of Contents":
-            issue.toc = True
-        # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
-        loc = result_item.find_element(By.CSS_SELECTOR, "span.jnlArticle").text
-    
-        # Try to extract pages from loc
-        try:
-            pages = re.match(".*:(.*)", loc).group(1).replace(".", "")
-            pages = re.sub("\s+", "", pages).strip()
-        except:
-            if title == "Table of Contents":
-                # Table of Contents has no page number
-                # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023)."
-                pages = "toc"
-            else:
-                pages = "na"
-    
-        # Extract URL of PDF files
-        # if we don't have a PDF file, skip it
-        try:
-            pdfurl = result_item.find_element(
-                By.CSS_SELECTOR, "a.format_pdf"
-            ).get_attribute("href")
-        except NoSuchElementException:
-            continue
-    
-        article = Article(title=title, pages=pages, pdfurl=pdfurl)
-        issue.articles.append(article)
-
-
-# %%
-def get_art_count(browser):
-    """
-    Get number of articles to download
-    """
-    for i in range(3):
-        count = len(list(browser.find_elements(By.CSS_SELECTOR, "li.resultItem.ltr")))
-        if count == 0:
-            click_view_issue_btn(browser)
-            time.sleep(5)
-            browser.refresh()
-            time.sleep(5)
-            continue
-        else:
-            break
-    if count == 0:
-        raise Exception("Cannot get number of articles")
-    return count
-
-
-# %%
-def get_publication_name(browser):
-    css = "div#pubContentSummaryFormZone > div.row > div.contentSummaryHeader > h1"
-    publication_name = browser.find_element(By.CSS_SELECTOR, css).text.strip()
-    return publication_name
-
-
-# %%
-def reject_cookies(browser):
-    css = "button#onetrust-reject-all-handler"
-    try:
-        el = browser.find_element(By.CSS_SELECTOR, css)
-    except NoSuchElementException:
-        pass
-    else:
-        el.click()
-        time.sleep(3)
-
-
-# %%
-def get_browser(browser_app="firefox", headless_browser=False, geckodriver_path=None):
-    browser = None
-    if browser_app == "firefox":
-        options = webdriver.FirefoxOptions()
-        if headless_browser:
-            options.add_argument("--headless")
-        if geckodriver_path:
-            service = webdriver.FirefoxService(executable_path=str(geckodriver_path))
-        else:
-            service = None
-        browser = webdriver.Firefox(options=options, service=service)
-    elif browser_app == "chrome":
-        options = webdriver.ChromeOptions()
-        if headless_browser:
-            options.add_argument("--headless")
-        # executable_path param is not needed if you updated PATH
-        browser = webdriver.Chrome(options=options)
-    else:
-        raise Exception(f"Unknown value for browser_app={browser_app}")
-    browser.maximize_window()
-    return browser
-
-
-# %%
-def check_captcha(browser):
-    try:
-        browser.find_element(By.CSS_SELECTOR, "form#verifyCaptcha")
-    except NoSuchElementException:
-        return False
-    input("Solve captcha and press key to continue...")
-    return True
-
-
-# %%
-def select_issue(journal_year, journal_month, journal_issue):
-    # Select year
-    try:
-        select_element = browser.find_element(By.CSS_SELECTOR, "select#yearSelected")
-    except NoSuchElementException:
-        raise Exception(f"Cannot find year select box")
-    select = Select(select_element)
-    select.select_by_visible_text(str(journal_year))
-
-    # Select month
-    try:
-        select_element = browser.find_element(By.CSS_SELECTOR, "select#monthSelected")
-    except NoSuchElementException:
-        raise Exception(f"Cannot find month select box")
-    select = Select(select_element)
-    month_locale_full_name = datetime.date(year=1, month=journal_month, day=1).strftime("%B")
-    select.select_by_visible_text(month_locale_full_name)
-
-    # Select issue
-    try:
-        select_element = browser.find_element(By.CSS_SELECTOR, "select#issueSelected")
-    except NoSuchElementException:
-        raise Exception(f"Cannot find issue select box")
-    select = Select(select_element)
-    select.select_by_index(journal_issue)
-
-    # Click on "View Issue" button
-    time.sleep(2)
-    click_view_issue_btn(browser)
-    time.sleep(5)
-
-
-# %%
-def click_view_issue_btn(browser):
-    view_issue_css = "input[value='View issue']"
-    view_issue = browser.find_element(By.CSS_SELECTOR, view_issue_css)
-    view_issue.click()
-
 
 # %% [markdown]
 # ## PDF
@@ -500,7 +251,7 @@ def economist_rename_toc(issue, tocdir, outdir):
         page_range = ",".join([str(x) for x in range(page_start, page_start + npages)])
         logging.info(f"TOC page range: {page_range}")
         pdffn = outdir / (f"pages_{page_range}.pdf")
-        shutil.copy(tocpdf, pdffn)        
+        shutil.copy(tocpdf, pdffn)
 
 
 # %%
@@ -663,34 +414,41 @@ logging.basicConfig(
 logging.info("Start")
 
 # %%
-logging.info("Python version: "+sys.executable)
+logging.info("Python version: " + sys.executable)
 
 # %% [markdown]
 # Open web browser
 
 # %%
-browser = get_browser(browser_app, headless_browser)
+scraper = ProQuestWebScraper(publication_id=publication_id, artdir1=artdir1, tocdir=tocdir)
+scraper.get_browser(browser_app, headless_browser)
 
 # %% [markdown]
 # DELETE THIS CELL
 
 # %%
 from mylogin import mylogin
-mylogin(browser, datadir)
+
+mylogin(scraper.browser, datadir)
 
 # %% [markdown]
 # Connect to ProQuest website
 
 # %%
-logging.info(f"Conneting to ProQuest URL={proquest_url}")
-browser.get(proquest_url)
-time.sleep(5)
+logging.info(f"Connecting to ProQuest URL={proquest_url}")
+scraper.browser.get(proquest_url)
 
 # %% [markdown]
 # Reject cookies
 
 # %%
-reject_cookies(browser)
+scraper.reject_cookies()
+
+# %%
+# Wait for black background to go away
+# Otherwise we cannot click on buttons
+# Despite waiting for the buttons to be clickable
+time.sleep(2)
 
 # %% [markdown]
 # Get publication name
@@ -698,7 +456,7 @@ reject_cookies(browser)
 # %%
 issue = Issue()
 issue.publication_id = publication_id
-issue.publication_name = get_publication_name(browser)
+issue.publication_name = scraper.get_publication_name()
 logging.info(f"publication_name='{issue.publication_name}'")
 
 # %% [markdown]
@@ -710,14 +468,14 @@ if not journal_latest:
 
 # %%
 # Get number of articles to download
-count = get_art_count(browser)
+count = scraper.get_art_count()
 logging.info(f"Number of articles to download: {count}")
 
 # %% [markdown]
 # Get date in which the issue was released
 
 # %%
-issue.date = get_issue_date(browser)
+issue.date = scraper.get_issue_date()
 logging.info(f"Issue date of publication: {issue.date}")
 
 # %%
@@ -727,19 +485,19 @@ issue.build_final_fp(datadir)
 # Download list of articles
 
 # %%
-retrieve_articles_list(browser, issue)
+scraper.retrieve_articles_list(issue)
 
 # %% [markdown]
 # Downloads single articles
 
 # %%
-download_articles(browser, issue, sleep_time)
+scraper.download_articles(issue, sleep_time)
 
 # %% [markdown]
 # Close web browser
 
 # %%
-browser.close()
+scraper.browser.close()
 
 # %% [markdown]
 # Remove last page with copyright notice
@@ -823,7 +581,14 @@ if journal_cover_url:
     # Resize cover page size
     coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
     magick_page_size = str(issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
-    cmd = ["magick", "convert", str(coverfp), "-resize", magick_page_size, str(coverfp2)]
+    cmd = [
+        "magick",
+        "convert",
+        str(coverfp),
+        "-resize",
+        magick_page_size,
+        str(coverfp2),
+    ]
     logging.info(f"Command to resize cover page: '{cmd}'")
     ret = subprocess.run(cmd)
     assert ret.returncode == 0
@@ -883,5 +648,3 @@ shutil.move(outfn, issue.finalfp)
 
 # %%
 logging.info("Ended")
-
-# %%
