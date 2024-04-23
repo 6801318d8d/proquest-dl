@@ -66,7 +66,7 @@ publication_id = known_publication_ids["The Economist"]
 proquest_url = f"https://www.proquest.com/publication/{publication_id}"
 
 browser_app = "firefox"
-geckodriver_path = Path("/usr/bin/geckodriver")
+geckodriver_path = Path("/snap/bin/geckodriver")
 assert geckodriver_path.is_file()
 headless_browser = False
 
