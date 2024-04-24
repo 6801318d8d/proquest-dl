@@ -2,7 +2,7 @@
 
 # %%
 # Imports
-from mylogin import mylogin
+# from mylogin import mylogin
 import itertools
 import logging
 import re
@@ -433,35 +433,25 @@ logging.basicConfig(
 
 # %%
 logging.info("Start")
-
-# %%
 logging.info("Python version: " + sys.executable)
 
-# %% [markdown]
-# Open web browser
-
 # %%
+# Open web browser
 scraper = ProQuestWebScraper(
     publication_id=publication_id, artdir1=artdir1, tocdir=tocdir)
 scraper.get_browser(browser_app, headless_browser)
 
-# %% [markdown]
+# %%
 # DELETE THIS CELL
+# mylogin(scraper.browser, datadir)
 
 # %%
-mylogin(scraper.browser, datadir)
-
-# %% [markdown]
 # Connect to ProQuest website
-
-# %%
 logging.info(f"Connecting to ProQuest URL={proquest_url}")
 scraper.browser.get(proquest_url)
 
-# %% [markdown]
-# Reject cookies
-
 # %%
+# Reject cookies
 scraper.reject_cookies()
 
 # %%
