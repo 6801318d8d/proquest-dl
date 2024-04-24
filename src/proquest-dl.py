@@ -452,6 +452,7 @@ scraper.browser.get(proquest_url)
 
 # %%
 # Reject cookies
+time.sleep(4)
 scraper.reject_cookies()
 
 # %%
@@ -497,61 +498,43 @@ issue.build_final_fp(datadir)
 # %%
 scraper.retrieve_articles_list(issue)
 
-# %% [markdown]
+# %%
 # Downloads single articles
-
-# %% jupyter={"outputs_hidden": true}
 scraper.download_articles(issue, sleep_time)
 
-# %% [markdown]
-# Close web browser
-
 # %%
+# Close web browser
 scraper.browser.close()
 
-# %% [markdown]
-# Remove last page with copyright notice
-
 # %%
+# Remove last page with copyright notice
 remove_last_page_from_articles(artdir1, artdir2)
 
-# %% [markdown]
-# Remove CropBox from PDF files
-
 # %%
+# Remove CropBox from PDF files
 remove_cropbox_from_articles(artdir2, artdir3)
 
-# %% [markdown]
-# Get size of a PDF page
-
 # %%
+# Get size of a PDF page
 fn = next(artdir3.iterdir())
 logging.info(f"Using fn='{fn}'")
 issue.page_size = get_page_size(fn)
 
-# %% [markdown]
+# %%
 # If we have TOC, get page number and rename
 # (only for The Economist, which doesn't provide page numbers for its TOC)
-
-# %%
 economist_rename_toc(issue, tocdir, artdir3)
 
-# %% [markdown]
-# Generate TOC if we don't have one
-
 # %%
+# Generate TOC if we don't have one
 generate_toc(issue, tocdir, artdir3)
 
-# %% [markdown]
+# %%
 # Extract single pages from original PDF files
-
-# %% jupyter={"outputs_hidden": true}
 extract_single_pages_from_pdfs(artdir3, pagesdir)
 
-# %% [markdown]
-# Generate white page
-
 # %%
+# Generate white page
 whitepdffp = downloaddir / "blank.pdf"
 doc: Document = Document()
 page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
@@ -559,16 +542,12 @@ doc.add_page(page)
 with open(whitepdffp, "wb") as pdf_file_handle:
     PDF.dumps(pdf_file_handle, doc)
 
-# %% [markdown]
-# Put white pages where needed
-
 # %%
+# Put white pages where needed
 insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
 
-# %% [markdown]
-# Download cover
-
 # %%
+# Download cover
 if publication_id == known_publication_ids["The Economist"]:
     # Build URL for The Economist's cover
     ts = issue.date.strftime("%Y%m%d")
@@ -614,38 +593,28 @@ if journal_cover_url:
     with open(page1fn, "wb") as pdf_file_handle:
         PDF.dumps(pdf_file_handle, doc)
 
-# %% [markdown]
-# Merge pages into final PDF file
-
 # %%
+# Merge pages into final PDF file
 outfp = downloaddir / "output.pdf"
 merge_pdf(pagesdir, outfp)
 
-# %% [markdown]
-# Insert bookmarks
-
 # %%
+# Insert bookmarks
 infp = outfp
 outfp = downloaddir / "output2.pdf"
 insert_bookmarks(issue, infp, outfp)
 
-# %% [markdown]
-# Compress final PDF file
-
 # %%
+# Compress final PDF file
 infp = outfp
 outfp = downloaddir / "output_bookmarked_compressed.pdf"
 cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infp), str(outfp)]
 ret = subprocess.run(cmd)
 assert ret.returncode == 0
 
-# %% [markdown]
-# Move PDF to "final" subfolder
-
 # %%
+# Move PDF to "final" subfolder
 shutil.move(outfp, issue.finalfp)
 
 # %%
 logging.info("Ended")
-
-# %%

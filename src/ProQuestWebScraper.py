@@ -124,6 +124,7 @@ class ProQuestWebScraper:
 
     def download_articles(self, issue, sleep_time):
         for article in tqdm(issue.articles):
+            time.sleep(6)
             self.download_article(issue, sleep_time, article)
 
     def retrieve_articles_list(self, issue):
