@@ -31,6 +31,7 @@ import typing
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+import requests
 
 import pandas as pd
 from borb.pdf import (
@@ -159,6 +160,31 @@ class FullPageLayout(MultiColumnLayout):
 # ## PDF
 
 # %%
+def insert_bookmarks(issue, infn, outfn):
+    bookmarkfn = downloaddir / "bookmark.txt"
+    with open(bookmarkfn, "w") as fh:
+        all_titles = [article.title for article in issue.articles]
+        all_pages = [article.pages for article in issue.articles]
+        for titlei, title in enumerate(all_titles):
+            fh.write('+"' + title + '"|' + all_pages[titlei].split("-")[0] + "\n")
+    
+    # def run_script(pdf_in_filename, bookmarks_filename, pdf_out_filename=None):
+    infn = downloaddir / "output.pdf"
+    outfn = downloaddir / "output_bookmarked.pdf"
+    pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
+
+
+# %%
+def merge_pdf(indir, outfp):
+    cmd = ["qpdf", "--empty", "--pages"]
+    cmd += [str(x) for x in natsorted(indir.iterdir())]
+    cmd += ["--", str(outfp)]
+    # logging.info(f"Command to merge pages: '{cmd}'")
+    ret = subprocess.run(cmd)
+    assert ret.returncode == 0
+
+
+# %%
 def insert_white_pages_in_issue(indir, outdir, whitepdffp):
     pages_we_have = [str(x) for x in indir.iterdir()]
     pages_we_have = [get_pages_from_file(x).split(",") for x in pages_we_have]
@@ -176,9 +202,9 @@ def insert_white_pages_in_issue(indir, outdir, whitepdffp):
 def extract_single_pages_from_pdfs(indir, outdir):
     pagesfns = natsorted(list(indir.iterdir()))
     for pagesfn in pagesfns:
-        logging.info(f"pagesfn={pagesfn.stem}")
+        #logging.debug(f"pagesfn={pagesfn.stem}")
         this_pages = get_pages_from_file(pagesfn)
-        logging.info(f"this_pages={this_pages}")
+        #logging.debug(f"this_pages={this_pages}")
         # Split pages across commas ","
         for this_page_i, this_page in enumerate(this_pages.split(",")):
             # Extract a single page
@@ -238,20 +264,29 @@ def generate_toc(issue, tocdir, outdir):
 # %%
 def economist_rename_toc(issue, tocdir, outdir):
     is_economist = issue.publication_id == known_publication_ids["The Economist"]
-    if is_economist and issue.toc:
-        logging.info("Getting page number from PDF")
-        tocpdf = tocdir / ("pages_toc.pdf")
-        page_start = get_text_from_top_right_corner(tocpdf, 40, 50, issue.page_size)
-        page_start = int(page_start)
-        assert 0 < page_start <= 10
-        logging.info(f"TOC starting page: {page_start}")
-        npages = get_number_of_pages(tocpdf)
-        assert 0 < npages <= 5
-        logging.info(f"TOC number of pages: {npages}")
-        page_range = ",".join([str(x) for x in range(page_start, page_start + npages)])
-        logging.info(f"TOC page range: {page_range}")
-        pdffn = outdir / (f"pages_{page_range}.pdf")
-        shutil.copy(tocpdf, pdffn)
+    if (not is_economist) or (not issue.toc):
+        return
+    logging.info("Economist renaming TOC")
+    tocpdf = tocdir / ("pages_toc.pdf")
+    tocpdf2 = tocdir / ("pages_toc_2.pdf")
+    del tocpdf
+    # Remove last page with copyright notice
+    remove_last_page(tocpdf, tocpdf2)
+    # Get first page of TOC from PDF file
+    page_start = get_text_from_top_right_corner(tocpdf2, 40, 50, issue.page_size)
+    page_start = int(page_start)
+    assert 0 < page_start <= 10
+    logging.info(f"TOC starting page: {page_start}")
+    # Get number of pages of TOC
+    npages = get_number_of_pages(tocpdf2)
+    assert 0 < npages <= 5
+    logging.info(f"TOC number of pages: {npages}")
+    # Generate page range
+    page_range = ",".join([str(x) for x in range(page_start, page_start + npages)])
+    logging.info(f"TOC page range: {page_range}")
+    # Rename file with page range
+    pdffn = outdir / (f"pages_{page_range}.pdf")
+    shutil.copy(tocpdf2, pdffn)
 
 
 # %%
@@ -490,7 +525,7 @@ scraper.retrieve_articles_list(issue)
 # %% [markdown]
 # Downloads single articles
 
-# %%
+# %% jupyter={"outputs_hidden": true}
 scraper.download_articles(issue, sleep_time)
 
 # %% [markdown]
@@ -534,7 +569,7 @@ generate_toc(issue, tocdir, artdir3)
 # %% [markdown]
 # Extract single pages from original PDF files
 
-# %%
+# %% jupyter={"outputs_hidden": true}
 extract_single_pages_from_pdfs(artdir3, pagesdir)
 
 # %% [markdown]
@@ -605,30 +640,14 @@ if journal_cover_url:
 # Merge pages into final PDF file
 
 # %%
-cmd = ["qpdf", "--empty", "--pages"]
-cmd += [str(x) for x in natsorted(pagesdir.iterdir())]
-cmd += ["--", str(downloaddir / "output.pdf")]
-# logging.info(f"Command to merge pages: '{cmd}'")
-ret = subprocess.run(cmd)
-assert ret.returncode == 0
+outfp = downloaddir / "output.pdf"
+merge_pdf(pagesdir, outfp)
 
 # %% [markdown]
 # Insert bookmarks
 
 # %%
-bookmarkfn = downloaddir / "bookmark.txt"
-with open(bookmarkfn, "w") as fh:
-    all_titles = [article.title for article in issue.articles]
-    all_pages = [article.pages for article in issue.articles]
-    for titlei, title in enumerate(all_titles):
-        fh.write('+"' + title + '"|' + all_pages[titlei].split("-")[0] + "\n")
-
-# %%
-# def run_script(pdf_in_filename, bookmarks_filename, pdf_out_filename=None):
-infn = downloaddir / "output.pdf"
-outfn = downloaddir / "output_bookmarked.pdf"
-pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
-infn.unlink()
+insert_bookmarks(issue, infn, outfn)
 
 # %% [markdown]
 # Compress final PDF file
@@ -648,3 +667,5 @@ shutil.move(outfn, issue.finalfp)
 
 # %%
 logging.info("Ended")
+
+# %%
