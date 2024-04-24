@@ -2,19 +2,15 @@
 
 # %%
 # Imports
-import datetime
+from mylogin import mylogin
 import itertools
-import json
 import logging
-import os
-import random
 import re
 import shutil
 import subprocess
 import sys
 import time
 import typing
-from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 import requests
@@ -27,13 +23,11 @@ from borb.pdf import (
     MultiColumnLayout,
     Page,
     PageLayout,
-    SingleColumnLayout,
 )
 from borb.pdf.canvas.geometry.rectangle import Rectangle
 from borb.toolkit import LocationFilter, SimpleTextExtraction
 from natsort import natsorted
 
-from tqdm.notebook import tqdm
 
 import pdfbookmarker
 
@@ -45,7 +39,8 @@ from ProQuestWebScraper import ProQuestWebScraper
 
 # %%
 # Publication ID of "The Economist"
-known_publication_ids = {"The Economist": "41716", "MIT Technology Review": "35850"}
+known_publication_ids = {"The Economist": "41716",
+                         "MIT Technology Review": "35850"}
 
 # publication_id = known_publication_ids["MIT Technology Review"]
 publication_id = known_publication_ids["The Economist"]
@@ -86,7 +81,7 @@ continue_download = False
 delete_existing = True
 
 # %%
-assert type(journal_latest) == bool
+assert journal_latest is bool
 if not journal_latest:
     assert journal_year >= 1900
     assert journal_year <= 2999
@@ -152,8 +147,9 @@ def insert_bookmarks(issue, infn, outfn):
         all_titles = [article.title for article in issue.articles]
         all_pages = [article.pages for article in issue.articles]
         for titlei, title in enumerate(all_titles):
-            fh.write('+"' + title + '"|' + all_pages[titlei].split("-")[0] + "\n")
-    
+            fh.write('+"' + title + '"|' +
+                     all_pages[titlei].split("-")[0] + "\n")
+
     # def run_script(pdf_in_filename, bookmarks_filename, pdf_out_filename=None):
     infn = downloaddir / "output.pdf"
     outfn = downloaddir / "output_bookmarked.pdf"
@@ -188,9 +184,9 @@ def insert_white_pages_in_issue(indir, outdir, whitepdffp):
 def extract_single_pages_from_pdfs(indir, outdir):
     pagesfns = natsorted(list(indir.iterdir()))
     for pagesfn in pagesfns:
-        #logging.debug(f"pagesfn={pagesfn.stem}")
+        # logging.debug(f"pagesfn={pagesfn.stem}")
         this_pages = get_pages_from_file(pagesfn)
-        #logging.debug(f"this_pages={this_pages}")
+        # logging.debug(f"this_pages={this_pages}")
         # Split pages across commas ","
         for this_page_i, this_page in enumerate(this_pages.split(",")):
             # Extract a single page
@@ -241,7 +237,8 @@ def generate_toc(issue, tocdir, outdir):
         "-o",
         str(tocpdffile),
     ]
-    logging.info(f"Command to convert self-generated TOC from Markdown to PDF: '{cmd}'")
+    logging.info(
+        f"Command to convert self-generated TOC from Markdown to PDF: '{cmd}'")
     ret = subprocess.run(cmd)
     assert ret.returncode == 0
     shutil.move(tocpdffile, outdir / "pages_2-3.pdf")
@@ -255,11 +252,12 @@ def economist_rename_toc(issue, tocdir, outdir):
     logging.info("Economist renaming TOC")
     tocpdf = tocdir / ("pages_toc.pdf")
     tocpdf2 = tocdir / ("pages_toc_2.pdf")
-    del tocpdf
     # Remove last page with copyright notice
     remove_last_page(tocpdf, tocpdf2)
+    del tocpdf
     # Get first page of TOC from PDF file
-    page_start = get_text_from_top_right_corner(tocpdf2, 40, 50, issue.page_size)
+    page_start = get_text_from_top_right_corner(
+        tocpdf2, 40, 50, issue.page_size)
     page_start = int(page_start)
     assert 0 < page_start <= 10
     logging.info(f"TOC starting page: {page_start}")
@@ -268,7 +266,8 @@ def economist_rename_toc(issue, tocdir, outdir):
     assert 0 < npages <= 5
     logging.info(f"TOC number of pages: {npages}")
     # Generate page range
-    page_range = ",".join([str(x) for x in range(page_start, page_start + npages)])
+    page_range = ",".join([str(x)
+                          for x in range(page_start, page_start + npages)])
     logging.info(f"TOC page range: {page_range}")
     # Rename file with page range
     pdffn = outdir / (f"pages_{page_range}.pdf")
@@ -410,7 +409,8 @@ def convert_page_range(this_pages):
         start = int(res.group(1))
         end = int(res.group(2))
         seq = [str(x) for x in range(start, end + 1)]
-        this_pages = this_pages[: res.start()] + ",".join(seq) + this_pages[res.end() :]
+        this_pages = this_pages[: res.start()] + \
+            ",".join(seq) + this_pages[res.end():]
     return this_pages
 
 
@@ -441,15 +441,14 @@ logging.info("Python version: " + sys.executable)
 # Open web browser
 
 # %%
-scraper = ProQuestWebScraper(publication_id=publication_id, artdir1=artdir1, tocdir=tocdir)
+scraper = ProQuestWebScraper(
+    publication_id=publication_id, artdir1=artdir1, tocdir=tocdir)
 scraper.get_browser(browser_app, headless_browser)
 
 # %% [markdown]
 # DELETE THIS CELL
 
 # %%
-from mylogin import mylogin
-
 mylogin(scraper.browser, datadir)
 
 # %% [markdown]
@@ -485,7 +484,7 @@ logging.info(f"publication_name='{issue.publication_name}'")
 
 # %%
 if not journal_latest:
-    select_issue(journal_year, journal_month, journal_issue)
+    scraper.select_issue(journal_year, journal_month, journal_issue)
 
 # %%
 # Get number of articles to download
@@ -541,7 +540,8 @@ logging.info(f"Using fn='{fn}'")
 issue.page_size = get_page_size(fn)
 
 # %% [markdown]
-# If we have TOC, get page number and rename (only for The Economist, which doesn't provide page numbers for its TOC)
+# If we have TOC, get page number and rename
+# (only for The Economist, which doesn't provide page numbers for its TOC)
 
 # %%
 economist_rename_toc(issue, tocdir, artdir3)
@@ -601,7 +601,8 @@ if journal_cover_url:
         page1fn.unlink()
     # Resize cover page size
     coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
-    magick_page_size = str(issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
+    magick_page_size = str(
+        issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
     cmd = [
         "magick",
         "convert",
@@ -617,7 +618,8 @@ if journal_cover_url:
     doc: Document = Document()
     page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
     layout: PageLayout = FullPageLayout(page)
-    layout.add(Image(coverfp, width=issue.page_size[0], height=issue.page_size[1]))
+    layout.add(
+        Image(coverfp, width=issue.page_size[0], height=issue.page_size[1]))
     doc.add_page(page)
     with open(page1fn, "wb") as pdf_file_handle:
         PDF.dumps(pdf_file_handle, doc)
@@ -633,15 +635,17 @@ merge_pdf(pagesdir, outfp)
 # Insert bookmarks
 
 # %%
-insert_bookmarks(issue, infn, outfn)
+infp = outfp
+outfp = downloaddir / "output2.pdf"
+insert_bookmarks(issue, infp, outfp)
 
 # %% [markdown]
 # Compress final PDF file
 
 # %%
-infn = outfn
-outfn = downloaddir / "output_bookmarked_compressed.pdf"
-cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infn), str(outfn)]
+infp = outfp
+outfp = downloaddir / "output_bookmarked_compressed.pdf"
+cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infp), str(outfp)]
 ret = subprocess.run(cmd)
 assert ret.returncode == 0
 
@@ -649,7 +653,7 @@ assert ret.returncode == 0
 # Move PDF to "final" subfolder
 
 # %%
-shutil.move(outfn, issue.finalfp)
+shutil.move(outfp, issue.finalfp)
 
 # %%
 logging.info("Ended")

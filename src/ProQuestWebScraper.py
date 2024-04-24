@@ -4,7 +4,6 @@ from selenium import webdriver
 from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
-    UnexpectedAlertPresentException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -19,9 +18,12 @@ import random
 import re
 
 from Article import Article
-from Issue import Issue
 
-known_publication_ids = {"The Economist": "41716", "MIT Technology Review": "35850"}
+known_publication_ids = {
+    "The Economist": "41716",
+    "MIT Technology Review": "35850",
+}
+
 
 class ProQuestWebScraper:
 
@@ -32,8 +34,13 @@ class ProQuestWebScraper:
 
     # Generic
 
-    def wait_element_to_be_clickable(self, locator, timeout=5, starting_element=None):
-        assert(len(locator)==2)
+    def wait_element_to_be_clickable(
+        self,
+        locator,
+        timeout=5,
+        starting_element=None,
+    ):
+        assert (len(locator) == 2)
         if not starting_element:
             starting_element = self.browser
         cond = EC.element_to_be_clickable(locator)
@@ -48,27 +55,39 @@ class ProQuestWebScraper:
             raise e
         return el
 
-    def wait_element_to_be_clickable_css(self, css, timeout=5, starting_element=None):
+    def wait_element_to_be_clickable_css(
+        self,
+        css,
+        timeout=5,
+        starting_element=None,
+    ):
         locator = (By.CSS_SELECTOR, css)
-        return self.wait_element_to_be_clickable(locator=locator,
-                                                 timeout=timeout,
-                                                 starting_element=starting_element)
+        args = {
+            "locator": locator,
+            "timeout": timeout,
+            "starting_element": starting_element,
+        }
+        return self.wait_element_to_be_clickable(**args)
 
     # Specific
 
     def get_issue_date(self):
-        issue_date_select = self.browser.find_element(By.CSS_SELECTOR, "select#issueSelected")
+        issue_date_select = self.browser.find_element(
+            By.CSS_SELECTOR, "select#issueSelected")
         issue_date_select = Select(issue_date_select)
         issue_date = issue_date_select.first_selected_option.text.strip()
         if self.publication_id == known_publication_ids["The Economist"]:
             issue_date = issue_date.split(";")[0].strip()
-            issue_date = datetime.datetime.strptime(issue_date, "%b %d, %Y").date()
+            issue_date = datetime.datetime.strptime(
+                issue_date, "%b %d, %Y").date()
         elif self.publication_id == known_publication_ids["MIT Technology Review"]:
-            month = datetime.datetime.strptime(issue_date[0:3], "%b").date().month
+            month = datetime.datetime.strptime(
+                issue_date[0:3], "%b").date().month
             year = int(issue_date.split()[1][:-1])
             issue_date = datetime.date(year=year, month=month, day=1)
         else:
-            raise Exception("We miss logic for issue date for this publication :(")
+            raise Exception(
+                "We miss logic for issue date for this publication :(")
         return issue_date
 
     def download_article(self, issue, sleep_time, article):
@@ -78,7 +97,8 @@ class ProQuestWebScraper:
         else:
             pdffn = self.tocdir / ("pages_" + article.pages + ".pdf")
         if pdffn.is_file():
-            logging.info(f"Skipping page(s) {article.pages} because already downloaded")
+            logging.info(
+                f"Skipping page(s) {article.pages} because already downloaded")
             return
         logging.info(f"Downloading pages {article.pages}")
 
@@ -110,7 +130,8 @@ class ProQuestWebScraper:
         """
         Download list of articles
         """
-        result_items = self.browser.find_elements(By.CSS_SELECTOR, "li.resultItem.ltr")
+        result_items = self.browser.find_elements(
+            By.CSS_SELECTOR, "li.resultItem.ltr")
 
         for result_item in tqdm(result_items):
 
@@ -128,14 +149,14 @@ class ProQuestWebScraper:
             # Try to extract pages from reference
             try:
                 pages = re.match(".*:(.*)", loc).group(1).replace(".", "")
-                pages = re.sub("\s+", "", pages).strip()
-            except:
+                pages = re.sub(r"\s+", "", pages).strip()
+            except Exception:
                 if title == "Table of Contents":
                     # Table of Contents has no page number
                     # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023)."
                     pages = "toc"
                 else:
-                    #pages = "na"
+                    # pages = "na"
                     msg = "Error extracting pages\n"
                     msg += f"title={title}\n"
                     msg += f"loc={loc}"
@@ -145,7 +166,8 @@ class ProQuestWebScraper:
             # if we don't have a PDF file, skip it
             try:
                 locator = (By.CSS_SELECTOR, "a.format_pdf")
-                pdfurl = result_item.find_element(*locator).get_attribute("href")
+                pdfurl = result_item.find_element(
+                    *locator).get_attribute("href")
             except NoSuchElementException:
                 continue
 
@@ -157,7 +179,8 @@ class ProQuestWebScraper:
         Get number of articles to download
         """
         for i in range(3):
-            count = len(list(self.browser.find_elements(By.CSS_SELECTOR, "li.resultItem.ltr")))
+            count = len(list(self.browser.find_elements(
+                By.CSS_SELECTOR, "li.resultItem.ltr")))
             if count == 0:
                 self.click_view_issue_btn()
                 time.sleep(5)
@@ -172,7 +195,8 @@ class ProQuestWebScraper:
 
     def get_publication_name(self):
         css = "div#pubContentSummaryFormZone > div.row > div.contentSummaryHeader > h1"
-        publication_name = self.browser.find_element(By.CSS_SELECTOR, css).text.strip()
+        publication_name = self.browser.find_element(
+            By.CSS_SELECTOR, css).text.strip()
         return publication_name
 
     def reject_cookies(self):
@@ -180,14 +204,20 @@ class ProQuestWebScraper:
         el = self.wait_element_to_be_clickable_css(css)
         el.click()
 
-    def get_browser(self, browser_app="firefox", headless_browser=False, geckodriver_path=None):
+    def get_browser(
+        self,
+        browser_app="firefox",
+        headless_browser=False,
+        geckodriver_path=None,
+    ):
         self.browser = None
         if browser_app == "firefox":
             options = webdriver.FirefoxOptions()
             if headless_browser:
                 options.add_argument("--headless")
             if geckodriver_path:
-                service = webdriver.FirefoxService(executable_path=str(geckodriver_path))
+                service = webdriver.FirefoxService(
+                    executable_path=str(geckodriver_path))
             else:
                 service = None
             self.browser = webdriver.Firefox(options=options, service=service)
@@ -212,17 +242,19 @@ class ProQuestWebScraper:
     def select_issue(self, journal_year, journal_month, journal_issue):
         # Select year
         try:
-            select_element = self.browser.find_element(By.CSS_SELECTOR, "select#yearSelected")
+            select_element = self.browser.find_element(
+                By.CSS_SELECTOR, "select#yearSelected")
         except NoSuchElementException:
-            raise Exception(f"Cannot find year select box")
+            raise Exception("Cannot find year select box")
         select = Select(select_element)
         select.select_by_visible_text(str(journal_year))
 
         # Select month
         try:
-            select_element = self.browser.find_element(By.CSS_SELECTOR, "select#monthSelected")
+            select_element = self.browser.find_element(
+                By.CSS_SELECTOR, "select#monthSelected")
         except NoSuchElementException:
-            raise Exception(f"Cannot find month select box")
+            raise Exception("Cannot find month select box")
         select = Select(select_element)
         month_date = datetime.date(year=1, month=journal_month, day=1)
         month_locale_full_name = month_date.strftime("%B")
@@ -230,9 +262,10 @@ class ProQuestWebScraper:
 
         # Select issue
         try:
-            select_element = self.browser.find_element(By.CSS_SELECTOR, "select#issueSelected")
+            select_element = self.browser.find_element(
+                By.CSS_SELECTOR, "select#issueSelected")
         except NoSuchElementException:
-            raise Exception(f"Cannot find issue select box")
+            raise Exception("Cannot find issue select box")
         select = Select(select_element)
         select.select_by_index(journal_issue)
 

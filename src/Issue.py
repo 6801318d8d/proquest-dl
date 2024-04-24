@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from Article import Article
 
+
 @dataclass
 class Issue:
     publication_id: int = 0
@@ -19,4 +20,3 @@ class Issue:
         pnamecl = self.publication_name.replace(" ", "").strip()
         self.finalfp = datadir / "final" / (pnamecl + "-" + ts + ".pdf")
         assert not self.finalfp.is_file()
-
