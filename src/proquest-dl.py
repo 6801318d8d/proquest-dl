@@ -13,31 +13,20 @@ import time
 import typing
 from decimal import Decimal
 from pathlib import Path
-import requests
 
 import pandas as pd
-from borb.pdf import (
-    PDF,
-    Document,
-    Image,
-    MultiColumnLayout,
-    Page,
-    PageLayout,
-)
+import requests
+from borb.pdf import PDF, Document, Image, MultiColumnLayout, Page, PageLayout
 from borb.pdf.canvas.geometry.rectangle import Rectangle
 from borb.toolkit import LocationFilter, SimpleTextExtraction
 from natsort import natsorted
 
-
 import pdfbookmarker
-
 from Issue import Issue
 from ProQuestWebScraper import ProQuestWebScraper
 
-# %% [markdown]
-# # Config
-
 # %%
+# # Config
 # Publication ID of "The Economist"
 known_publication_ids = {"The Economist": "41716",
                          "MIT Technology Review": "35850"}
@@ -50,7 +39,7 @@ proquest_url = f"https://www.proquest.com/publication/{publication_id}"
 browser_app = "firefox"
 geckodriver_path = Path("/usr/bin/geckodriver")
 assert geckodriver_path.is_file()
-headless_browser = False
+headless_browser = True
 
 datadir = Path("../data").resolve()
 downloaddir = datadir / "download"
