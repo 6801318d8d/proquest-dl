@@ -404,7 +404,7 @@ def remove_cropbox_from_articles(indir, outdir):
 # %%
 def convert_page_range(this_pages):
     # Convert a-b into a,a+1,a+2,...,b-2,b-1,b
-    while res := re.search("(\d+)-(\d+)", this_pages):
+    while res := re.search(r"(\d+)-(\d+)", this_pages):
         # logging.info(f"{res.start()}, {res.end()}")
         # logging.info(f"{res.group(1)}, {res.group(2)}")
         start = int(res.group(1))
@@ -416,7 +416,7 @@ def convert_page_range(this_pages):
 
 # %%
 def get_pages_from_file(pagesfn):
-    this_pages = re.search(".*?pages_(.*)\.pdf", str(pagesfn)).group(1)
+    this_pages = re.search(r".*?pages_(.*)\.pdf", str(pagesfn)).group(1)
     this_pages = convert_page_range(this_pages)
     return this_pages
 
