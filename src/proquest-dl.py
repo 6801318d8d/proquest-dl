@@ -81,7 +81,7 @@ continue_download = False
 delete_existing = True
 
 # %%
-assert journal_latest is bool
+assert isinstance(journal_latest, bool)
 if not journal_latest:
     assert journal_year >= 1900
     assert journal_year <= 2999
