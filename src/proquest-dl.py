@@ -39,7 +39,7 @@ proquest_url = f"https://www.proquest.com/publication/{publication_id}"
 browser_app = "firefox"
 geckodriver_path = Path("/usr/bin/geckodriver")
 assert geckodriver_path.is_file()
-headless_browser = True
+headless_browser = False
 
 datadir = Path("../data").resolve()
 downloaddir = datadir / "download"
@@ -61,7 +61,7 @@ journal_cover_url = (
     "https://wp.technologyreview.com/wp-content/uploads/2023/08/SO23-front_cover2.png"
 )
 
-sleep_time = (10, 20)
+sleep_time = (5, 10)
 
 # %%
 # If set to True, existing files will not be deleted

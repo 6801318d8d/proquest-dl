@@ -69,6 +69,41 @@ class ProQuestWebScraper:
         }
         return self.wait_element_to_be_clickable(**args)
 
+    def wait_element_to_be_visible(
+        self,
+        locator,
+        timeout=5,
+        starting_element=None,
+    ):
+        assert (len(locator) == 2)
+        if not starting_element:
+            starting_element = self.browser
+        cond = EC.visibility_of_element_located(locator)
+        try:
+            el = WebDriverWait(starting_element, timeout).until(cond)
+        except TimeoutException as e:
+            msg = "Timed out waiting for element to be visible\n"
+            msg += f"locator={locator}\n"
+            msg += f"timeout={timeout}\n"
+            msg += f"starting_element={starting_element}"
+            logging.error(msg)
+            raise e
+        return el
+
+    def wait_element_to_be_visible_css(
+        self,
+        css,
+        timeout=5,
+        starting_element=None,
+    ):
+        locator = (By.CSS_SELECTOR, css)
+        args = {
+            "locator": locator,
+            "timeout": timeout,
+            "starting_element": starting_element,
+        }
+        return self.wait_element_to_be_visible(**args)
+
     # Specific
 
     def get_issue_date(self):
@@ -91,6 +126,7 @@ class ProQuestWebScraper:
         return issue_date
 
     def download_article(self, issue, sleep_time, article):
+
         # Generate PDF file name
         if article.pages != "toc":
             pdffn = self.artdir1 / ("pages_" + article.pages + ".pdf")
@@ -111,8 +147,9 @@ class ProQuestWebScraper:
                 break
 
         # Get URL of the PDF file
-        locator = (By.CSS_SELECTOR, "embed#embedded-pdf")
-        pdf_file_url = self.browser.find_element(*locator).get_attribute("src")
+        css = "embed#embedded-pdf"
+        el = self.wait_element_to_be_visible_css(css)
+        pdf_file_url = el.get_attribute("src")
 
         # Download PDF file to local
         data = requests.get(pdf_file_url).content
@@ -124,7 +161,6 @@ class ProQuestWebScraper:
 
     def download_articles(self, issue, sleep_time):
         for article in tqdm(issue.articles):
-            time.sleep(10)
             self.download_article(issue, sleep_time, article)
 
     def retrieve_articles_list(self, issue):
