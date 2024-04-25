@@ -2,7 +2,7 @@
 
 # %%
 # Imports
-# from mylogin import mylogin
+from mylogin import mylogin
 import itertools
 import logging
 import re
@@ -431,8 +431,11 @@ scraper = ProQuestWebScraper(
 scraper.get_browser(browser_app, headless_browser)
 
 # %%
-# DELETE THIS CELL
-# mylogin(scraper.browser, datadir)
+# Login using university credentials
+# This is my own code for my university
+# Write the code for your university or manually login each time
+# Comment out the following line
+mylogin(scraper.browser, datadir)
 
 # %%
 # Connect to ProQuest website

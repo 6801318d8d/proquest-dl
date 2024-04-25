@@ -148,7 +148,7 @@ class ProQuestWebScraper:
 
         # Get URL of the PDF file
         css = "embed#embedded-pdf"
-        el = self.wait_element_to_be_visible_css(css)
+        el = self.wait_element_to_be_visible_css(css, timeout=30)
         pdf_file_url = el.get_attribute("src")
 
         # Download PDF file to local
