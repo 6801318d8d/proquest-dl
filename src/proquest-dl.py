@@ -66,8 +66,8 @@ sleep_time = (5, 10)
 # %%
 # If set to True, existing files will not be deleted
 # before downloading the new ones
-continue_download = False
-delete_existing = True
+continue_download = True
+delete_existing = False
 
 # %%
 assert isinstance(journal_latest, bool)
@@ -123,14 +123,11 @@ class FullPageLayout(MultiColumnLayout):
         )
 
 
-# %% [markdown]
-# # Functions
-
-# %% [markdown]
-# ## PDF
+# Functions
 
 # %%
 def insert_bookmarks(issue, infn, outfn):
+    # Save bookmark into txt file
     bookmarkfn = downloaddir / "bookmark.txt"
     with open(bookmarkfn, "w") as fh:
         all_titles = [article.title for article in issue.articles]
@@ -138,10 +135,7 @@ def insert_bookmarks(issue, infn, outfn):
         for titlei, title in enumerate(all_titles):
             fh.write('+"' + title + '"|' +
                      all_pages[titlei].split("-")[0] + "\n")
-
-    # def run_script(pdf_in_filename, bookmarks_filename, pdf_out_filename=None):
-    infn = downloaddir / "output.pdf"
-    outfn = downloaddir / "output_bookmarked.pdf"
+    # Put bookmark into PDF
     pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
 
 
@@ -560,7 +554,7 @@ if journal_cover_url:
     page1fn = pagesdir / "pages_1.pdf"
     if page1fn.is_file():
         page1fn.unlink()
-    # Resize cover page size
+    # Resize cover page image
     coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
     magick_page_size = str(
         issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
@@ -575,12 +569,21 @@ if journal_cover_url:
     logging.info(f"Command to resize cover page: '{cmd}'")
     ret = subprocess.run(cmd)
     assert ret.returncode == 0
-    # Convert cover page to PDF
+    # Convert cover page form image to PDF
     doc: Document = Document()
     page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
     layout: PageLayout = FullPageLayout(page)
+    # Reduce image size a little bit to avoid borb
+    # throwing out an exception due to not having
+    # enough space on the page
+    width = int(float(issue.page_size[0])*0.95)
+    height = int(float(issue.page_size[1])*0.95)
     layout.add(
-        Image(coverfp, width=issue.page_size[0], height=issue.page_size[1]))
+        Image(
+            coverfp,
+            width=width,
+            height=height,
+        ))
     doc.add_page(page)
     with open(page1fn, "wb") as pdf_file_handle:
         PDF.dumps(pdf_file_handle, doc)

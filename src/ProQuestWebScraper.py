@@ -314,5 +314,8 @@ class ProQuestWebScraper:
 
     def click_view_issue_btn(self):
         view_issue_css = "input[value='View issue']"
-        view_issue = self.wait_element_to_be_clickable_css(view_issue_css)
+        view_issue = self.wait_element_to_be_clickable_css(
+            view_issue_css,
+            timeout=30,
+        )
         view_issue.click()
