@@ -49,6 +49,7 @@ artdir3 = downloaddir / "3_articles"
 pagesdir = downloaddir / "4_pages"
 tocdir = downloaddir / "toc"
 
+# If journal_latest=True, journal_year, journal_month and journal_issue must be se to None
 journal_latest = True
 journal_year = None
 journal_month = None
@@ -66,8 +67,8 @@ sleep_time = (5, 10)
 # %%
 # If set to True, existing files will not be deleted
 # before downloading the new ones
-continue_download = True
-delete_existing = False
+continue_download = False
+delete_existing = True
 
 # %%
 assert isinstance(journal_latest, bool)
@@ -171,15 +172,19 @@ def extract_single_pages_from_pdfs(indir, outdir):
         this_pages = get_pages_from_file(pagesfn)
         # logging.debug(f"this_pages={this_pages}")
         # Split pages across commas ","
-        for this_page_i, this_page in enumerate(this_pages.split(",")):
+        pages = sorted([int(x) for x in this_pages.split(",")])
+        for this_page_i, this_page in enumerate(pages):
             # Extract a single page
-            outfn = outdir / ("pages_" + this_page + ".pdf")
+            outfn = outdir / ("pages_" + str(this_page) + ".pdf")
+            pagenr = str(this_page_i + 1)
+            logging.debug(
+                f"Extracting from {pagesfn.name} page nr. {pagenr} into {outfn.name}")
             cmd = [
                 "qpdf",
                 "--empty",
                 "--pages",
                 str(pagesfn),
-                str(this_page_i + 1),
+                str(pagenr),
                 "--",
                 outfn,
             ]
@@ -404,7 +409,7 @@ def get_pages_from_file(pagesfn):
     return this_pages
 
 
-# %% [markdown]
+# %%
 # # Main
 
 # %%
@@ -421,7 +426,10 @@ logging.info("Python version: " + sys.executable)
 # %%
 # Open web browser
 scraper = ProQuestWebScraper(
-    publication_id=publication_id, artdir1=artdir1, tocdir=tocdir)
+    publication_id=publication_id,
+    artdir1=artdir1,
+    tocdir=tocdir,
+)
 scraper.get_browser(browser_app, headless_browser)
 
 # %%
@@ -447,19 +455,15 @@ scraper.reject_cookies()
 # Despite waiting for the buttons to be clickable
 time.sleep(2)
 
-# %% [markdown]
-# Get publication name
-
 # %%
+# Get publication name
 issue = Issue()
 issue.publication_id = publication_id
 issue.publication_name = scraper.get_publication_name()
 logging.info(f"publication_name='{issue.publication_name}'")
 
-# %% [markdown]
-# Select issue to download
-
 # %%
+# Select issue to download
 if not journal_latest:
     scraper.select_issue(journal_year, journal_month, journal_issue)
 
@@ -468,20 +472,16 @@ if not journal_latest:
 count = scraper.get_art_count()
 logging.info(f"Number of articles to download: {count}")
 
-# %% [markdown]
-# Get date in which the issue was released
-
 # %%
+# Get date in which the issue was released
 issue.date = scraper.get_issue_date()
 logging.info(f"Issue date of publication: {issue.date}")
 
 # %%
 issue.build_final_fp(datadir)
 
-# %% [markdown]
-# Download list of articles
-
 # %%
+# Download list of articles
 scraper.retrieve_articles_list(issue)
 
 # %%
