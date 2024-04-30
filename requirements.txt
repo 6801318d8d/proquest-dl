@@ -4,5 +4,3 @@ pandas
 PyPDF2
 borb
 tqdm
-keepassxc_proxy_client
-python-gnupg

@@ -1,11 +1,6 @@
-/.virtual_documents
 /data
-/src/.virtual_documents
-/src/logs
 /src/mylogin.py
-/src/proquest-dl.ipynb
-/src/jupytext.toml
 /src/geckodriver.log
-.ipynb_checkpoints
 .python-version
 __pycache__
+/requirements_login.txt

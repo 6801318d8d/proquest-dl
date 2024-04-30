@@ -1,3 +1,5 @@
+# proquest-dl
+
 Download magazines from ProQuest.
 
 You can download any magazine, although this has been tested on "The Economist" and "MIT Technology Review".
