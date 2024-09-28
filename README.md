@@ -23,28 +23,15 @@ This builds up a PDF issue of the magazine in question.
 
 ## Requirements
 
-Other than the python packages in `requirements.txt`, you will need `qpdf` and `pandoc` in your PATH.
+You will need `qpdf` and `pandoc` in your PATH.
 
 ## Run the software
 
-1. Clone the repository
+1. Install the software in a virtual environment and run it. For example:
 
     ```
     git clone https://github.com/6801318d8d/proquest-dl
     cd proquest-dl
-    ```
-
-2. Create a virtual environment and install required Python packages.
-
-    For example, using pyenv:
-
-    ```
-    pyenv virtualenv 3.12 proquest-dl
-    pyenv local proquest-dl
-    python -m pip install -r requirements.txt
-    ```
-3. Run the software
-
-    ```
-    ./src/proquest-dl.py 35850 --data-dir "./data" --firefox-profile-path "/home/USERNAME/.mozilla/firefox/PROFILE"
+    python -m pip install .
+    proquest-dl 35850 --data-dir "./data" --firefox-profile-path "/home/USERNAME/.mozilla/firefox/PROFILE"
     ```
