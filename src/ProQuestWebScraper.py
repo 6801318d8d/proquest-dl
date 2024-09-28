@@ -31,6 +31,7 @@ class ProQuestWebScraper:
         self.publication_id = publication_id
         self.artdir1 = artdir1
         self.tocdir = tocdir
+        self.downloaded_pages = set()
 
     # Generic
 
@@ -125,21 +126,40 @@ class ProQuestWebScraper:
                 "We miss logic for issue date for this publication :(")
         return issue_date
 
-    def download_article(self, issue, sleep_time, article):
+    def download_article(self, sleep_time, article):
+
+        # Check whether we already have all the pages of this article
+        if article.is_toc:
+            page_range = {"toc"}
+        else:
+            page_range = set(range(min(article.pages), max(article.pages)+1))
+        missing_pages = page_range.difference(self.downloaded_pages)
+        if not missing_pages:
+            msg = (f"Skipping page(s) {article.pages} "
+                   "because we already have all the pages")
+            logging.info(msg)
+            return
+
+        # Add to list of downloaded pages
+        # we do it now because even if we should skip the download later
+        # because we already have the PDF file, if we have the PDF file
+        # it means we already have the pages
+        self.downloaded_pages.update(page_range)
 
         # Generate PDF file name
-        filen = ("pages_" +
-                 str(min(article.pages)) +
-                 "-" +
-                 str(max(article.pages)) +
-                 ".pdf")
-        if article.pages != "toc":
-            pdffn = self.artdir1 / filen
-        else:
+        if article.is_toc:
+            filen = "pages_toc.pdf"
             pdffn = self.tocdir / filen
+        else:
+            pages_str = ",".join([str(x) for x in sorted(article.pages)])
+            filen = "pages_" + pages_str + ".pdf"
+            pdffn = self.artdir1 / filen
+
+        # Check if we have already downloaded this PDF file
         if pdffn.is_file():
-            logging.info(
-                f"Skipping page(s) {article.pages} because already downloaded")
+            msg = (f"Skipping page(s) {article.pages} "
+                   "because the file was already downloaded")
+            logging.info(msg)
             return
         logging.info(f"Downloading pages {article.pages}")
 
@@ -166,7 +186,7 @@ class ProQuestWebScraper:
 
     def download_articles(self, issue, sleep_time):
         for article in tqdm(issue.articles):
-            self.download_article(issue, sleep_time, article)
+            self.download_article(sleep_time, article)
 
     def retrieve_articles_list(self, issue):
         """
@@ -180,8 +200,11 @@ class ProQuestWebScraper:
             # Retrieve article title
             locator = (By.CSS_SELECTOR, "div.truncatedResultsTitle")
             title = result_item.find_element(*locator).text.strip()
+            # whether this article is the Table of Contents
+            is_toc = False
             if title == "Table of Contents":
                 issue.toc = True
+                is_toc = True
 
             # Retrieve article reference
             # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
@@ -192,14 +215,19 @@ class ProQuestWebScraper:
             # * -> Causes the resulting RE to match
             #      0 or more repetitions of the preceding RE
             try:
-                pages = re.match(".*:(.*)", loc).group(1).replace(".", "")
-                pages = re.sub(r"\s+", "", pages).strip()
-                pages = [int(page) for page in pages.split(",")]
+                pages_str = re.match(".*:(.*)", loc).group(1).replace(".", "")
+                pages_str = re.sub(r"\s+", "", pages_str).strip()
+                pages = list()
+                for page_part in pages_str.split(","):
+                    page_part = page_part.strip()
+                    for page in page_part.split("-"):
+                        page = int(page.strip())
+                        pages.append(page)
             except Exception:
                 if title == "Table of Contents":
                     # Table of Contents has no page number
                     # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023)."
-                    pages = "toc"
+                    pages = None
                 else:
                     # pages = "na"
                     msg = "Error extracting pages\n"
@@ -216,7 +244,7 @@ class ProQuestWebScraper:
             except NoSuchElementException:
                 continue
 
-            article = Article(title=title, pages=pages, pdfurl=pdfurl)
+            article = Article(title=title, pages=pages, pdfurl=pdfurl, is_toc=is_toc)
             issue.articles.append(article)
 
     def get_art_count(self):

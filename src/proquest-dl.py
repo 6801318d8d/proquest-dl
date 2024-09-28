@@ -155,7 +155,7 @@ def merge_pdf(indir, outfp):
 # %%
 def insert_white_pages_in_issue(indir, outdir, whitepdffp):
     pages_we_have = [str(x) for x in indir.iterdir()]
-    pages_we_have = [get_pages_from_file(x).split(",") for x in pages_we_have]
+    pages_we_have = [get_pages_from_file(x) for x in pages_we_have]
     pages_we_have = list(itertools.chain(*pages_we_have))
     pages_we_have = [int(x) for x in pages_we_have]
     pages_we_have.sort()
@@ -171,10 +171,8 @@ def extract_single_pages_from_pdfs(indir, outdir):
     pagesfns = natsorted(list(indir.iterdir()))
     for pagesfn in pagesfns:
         # logging.debug(f"pagesfn={pagesfn.stem}")
-        this_pages = get_pages_from_file(pagesfn)
-        # logging.debug(f"this_pages={this_pages}")
-        # Split pages across commas ","
-        pages = sorted([int(x) for x in this_pages.split(",")])
+        pages = sorted(get_pages_from_file(pagesfn))
+        # logging.debug(f"pages={pages}")
         for this_page_i, this_page in enumerate(pages):
             # Extract a single page
             outfn = outdir / ("pages_" + str(this_page) + ".pdf")
@@ -396,24 +394,9 @@ def remove_cropbox_from_articles(indir, outdir):
 
 
 # %%
-def convert_page_range(this_pages):
-    # Convert a-b into a,a+1,a+2,...,b-2,b-1,b
-    while res := re.search(r"(\d+)-(\d+)", this_pages):
-        # logging.info(f"{res.start()}, {res.end()}")
-        # logging.info(f"{res.group(1)}, {res.group(2)}")
-        start = int(res.group(1))
-        end = int(res.group(2))
-        seq = [str(x) for x in range(start, end + 1)]
-        this_pages = this_pages[: res.start()] + \
-            ",".join(seq) + this_pages[res.end():]
-    return this_pages
-
-
-# %%
 def get_pages_from_file(pagesfn):
     this_pages = re.search(r".*?pages_(.*)\.pdf", str(pagesfn)).group(1)
-    this_pages = convert_page_range(this_pages)
-    return this_pages
+    return this_pages.split(",")
 
 
 # %%

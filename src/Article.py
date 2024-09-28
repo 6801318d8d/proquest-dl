@@ -8,3 +8,4 @@ class Article:
     title: str
     pages: list[int]
     pdfurl: str
+    is_toc: bool
