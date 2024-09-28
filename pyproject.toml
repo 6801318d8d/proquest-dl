@@ -5,6 +5,7 @@ description = "Download magazines from ProQuest (e.g. The Economist, MIT Technol
 authors = ["Stephanie W Franco <talia1984@yahoo.com>"]
 license = "MIT"
 readme = "README.md"
+packages = [{include = "proquest_dl"}]
 
 [tool.poetry.dependencies]
 python = "^3.12"

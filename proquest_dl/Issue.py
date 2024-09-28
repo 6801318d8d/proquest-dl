@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from dataclasses import dataclass, field
-from Article import Article
+from proquest_dl.Article import Article
 
 
 @dataclass

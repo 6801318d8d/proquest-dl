@@ -17,7 +17,7 @@ import datetime
 import random
 import re
 
-from Article import Article
+from proquest_dl.Article import Article
 
 known_publication_ids = {
     "The Economist": "41716",

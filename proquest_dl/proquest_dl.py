@@ -21,9 +21,9 @@ from borb.pdf.canvas.geometry.rectangle import Rectangle
 from borb.toolkit import LocationFilter, SimpleTextExtraction
 from natsort import natsorted
 
-import pdfbookmarker
-from Issue import Issue
-from ProQuestWebScraper import ProQuestWebScraper
+import proquest_dl.pdfbookmarker
+from proquest_dl.Issue import Issue
+from proquest_dl.ProQuestWebScraper import ProQuestWebScraper
 
 # %%
 # # Config
@@ -31,14 +31,6 @@ from ProQuestWebScraper import ProQuestWebScraper
 known_publication_ids = {"The Economist": "41716",
                          "MIT Technology Review": "35850"}
 
-# If journal_latest=True =>
-# journal_year, journal_month and journal_issue must be se to None
-journal_latest = True
-journal_year = None
-journal_month = None
-# Most recent issue has index 0
-# Increasing the issue leads to less recent issues
-journal_issue = None
 
 # only needed for "MIT Technology Review"
 journal_cover_url = (
@@ -49,18 +41,6 @@ journal_cover_url = (
 sleep_time = (5, 10)
 
 # %%
-assert isinstance(journal_latest, bool)
-if not journal_latest:
-    assert journal_year >= 1900
-    assert journal_year <= 2999
-    assert journal_month >= 1
-    assert journal_month <= 12
-    assert journal_issue >= 0
-    assert journal_issue <= 4
-else:
-    assert journal_year is None
-    assert journal_month is None
-    assert journal_issue is None
 
 # %%
 
@@ -382,31 +362,74 @@ def main():
     # argparse
     parser = argparse.ArgumentParser(
         prog='proquest-dl',
-        description='Download journal issues from ProQuest')
+        description='Download journal issues from ProQuest',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('publication_id',
                         action='store',
                         help="The ID of the publication on ProQuest. "
                         "For example, 41716 for The Economist or "
                         "35850 for MIT Technology Review")
     parser.add_argument('--firefox-profile-path',
-                        action='store', default=None)
+                        action='store',
+                        help="Path to Firefox profile",
+                        default=None)
     parser.add_argument('--data-dir',
-                        action='store', default="../data")
+                        action='store',
+                        help="Path to data directory",
+                        default="../data")
     parser.add_argument('--headless',
-                        action='store_true', default=False)
+                        action='store_true',
+                        help="Run browser in headless mode (without showing UI)",
+                        default=False)
     parser.add_argument('--browser-app',
-                        action='store', default="firefox")
+                        action='store',
+                        help="Browser to use",
+                        default="firefox")
     parser.add_argument('--geckodriver-path',
-                        action='store', default="/usr/bin/geckodriver")
+                        action='store',
+                        help="Path to geckodriver",
+                        default="/usr/bin/geckodriver")
     parser.add_argument('--continue-download',
-                        action='store_true', default=False)
+                        action='store_true',
+                        help="Continue an already started download",
+                        default=False)
+    parser.add_argument('--publication-date',
+                        nargs=3,
+                        type=int,
+                        metavar=("YEAR", "MONTH", "ISSUE"),
+                        help=("Date of the publication to download. "
+                              "If everything is None, it will download the latest issue"),
+                        action='store', default=[None, None, None])
     args = parser.parse_args()
     print(args)
 
     # Make variables
-    proquest_url = f"https://www.proquest.com/publication/{args.publication_id}"
+    proquest_url = f"https://www.proquest.com/publication/{
+        args.publication_id}"
 
-    # Make directories
+    # Date variables
+    journal_year = args.publication_date[0]
+    journal_month = args.publication_date[1]
+    # Most recent issue has index 0
+    # Increasing the issue leads to less recent issues
+    journal_issue = args.publication_date[2]
+    journal_latest = (journal_year is None) and \
+        (journal_month is None) and \
+        (journal_issue is None)
+    assert isinstance(journal_latest, bool)
+    if not journal_latest:
+        assert journal_year >= 1900
+        assert journal_year <= 2999
+        assert journal_month >= 1
+        assert journal_month <= 12
+        assert journal_issue >= 0
+        assert journal_issue <= 4
+    else:
+        assert journal_year is None
+        assert journal_month is None
+        assert journal_issue is None
+
+    # Directories variables
     datadir = Path(args.data_dir).resolve()
     assert (datadir.is_dir())
     downloaddir = datadir / "download"
@@ -571,7 +594,8 @@ def main():
         if page1fn.is_file():
             page1fn.unlink()
         # Resize cover page image
-        coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
+        coverfp2 = coverfp.parent / \
+            (coverfp.stem + "_resized" + coverfp.suffix)
         magick_page_size = str(
             issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
         cmd = [
@@ -629,5 +653,6 @@ def main():
     # %%
     logging.info("Ended")
 
-if __name__== "__main__":
+
+if __name__ == "__main__":
     main()
