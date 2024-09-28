@@ -6,5 +6,5 @@ from dataclasses import dataclass
 @dataclass
 class Article:
     title: str
-    pages: str
+    pages: list[int]
     pdfurl: str

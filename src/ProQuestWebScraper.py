@@ -184,9 +184,12 @@ class ProQuestWebScraper:
             loc = result_item.find_element(*locator).text
 
             # Try to extract pages from reference
+            # * -> Causes the resulting RE to match
+            #      0 or more repetitions of the preceding RE
             try:
                 pages = re.match(".*:(.*)", loc).group(1).replace(".", "")
                 pages = re.sub(r"\s+", "", pages).strip()
+                pages = [int(page) for page in pages.split(",")]
             except Exception:
                 if title == "Table of Contents":
                     # Table of Contents has no page number

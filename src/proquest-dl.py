@@ -49,7 +49,8 @@ artdir3 = downloaddir / "3_articles"
 pagesdir = downloaddir / "4_pages"
 tocdir = downloaddir / "toc"
 
-# If journal_latest=True, journal_year, journal_month and journal_issue must be se to None
+# If journal_latest=True =>
+# journal_year, journal_month and journal_issue must be se to None
 journal_latest = True
 journal_year = None
 journal_month = None
@@ -59,7 +60,8 @@ journal_issue = None
 
 # only needed for "MIT Technology Review"
 journal_cover_url = (
-    "https://wp.technologyreview.com/wp-content/uploads/2023/08/SO23-front_cover2.png"
+    "https://wp.technologyreview.com/"
+    "wp-content/uploads/2023/08/SO23-front_cover2.png"
 )
 
 sleep_time = (5, 10)
@@ -178,7 +180,8 @@ def extract_single_pages_from_pdfs(indir, outdir):
             outfn = outdir / ("pages_" + str(this_page) + ".pdf")
             pagenr = str(this_page_i + 1)
             logging.debug(
-                f"Extracting from {pagesfn.name} page nr. {pagenr} into {outfn.name}")
+                f"Extracting from {pagesfn.name} "
+                f"page nr. {pagenr} into {outfn.name}")
             cmd = [
                 "qpdf",
                 "--empty",
@@ -234,7 +237,11 @@ def generate_toc(issue, tocdir, outdir):
 
 # %%
 def economist_rename_toc(issue, tocdir, outdir):
-    is_economist = issue.publication_id == known_publication_ids["The Economist"]
+    is_economist = (
+        issue.publication_id
+        ==
+        known_publication_ids["The Economist"]
+    )
     if (not is_economist) or (not issue.toc):
         return
     logging.info("Economist renaming TOC")
@@ -416,7 +423,8 @@ def get_pages_from_file(pagesfn):
 logging.basicConfig(
     force=True,
     level=logging.INFO,
-    format="[%(asctime)s] [%(filename)s:%(funcName)s] [%(levelname)s] %(message)s",
+    format=("[%(asctime)s] [%(filename)s:%(funcName)s] "
+            "[%(levelname)s] %(message)s")
 )
 
 # %%
@@ -478,6 +486,8 @@ issue.date = scraper.get_issue_date()
 logging.info(f"Issue date of publication: {issue.date}")
 
 # %%
+# Build file path in which
+# the resulting PDF file will be saved
 issue.build_final_fp(datadir)
 
 # %%
