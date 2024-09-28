@@ -553,7 +553,6 @@ if journal_cover_url:
         issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
     cmd = [
         "magick",
-        "convert",
         str(coverfp),
         "-resize",
         magick_page_size,
