@@ -2,7 +2,7 @@
 
 # %%
 # Imports
-from mylogin import mylogin
+import argparse
 import itertools
 import logging
 import re
@@ -31,24 +31,6 @@ from ProQuestWebScraper import ProQuestWebScraper
 known_publication_ids = {"The Economist": "41716",
                          "MIT Technology Review": "35850"}
 
-# publication_id = known_publication_ids["MIT Technology Review"]
-publication_id = known_publication_ids["The Economist"]
-
-proquest_url = f"https://www.proquest.com/publication/{publication_id}"
-
-browser_app = "firefox"
-geckodriver_path = Path("/usr/bin/geckodriver")
-assert geckodriver_path.is_file()
-headless_browser = False
-
-datadir = Path("../data").resolve()
-downloaddir = datadir / "download"
-artdir1 = downloaddir / "1_articles"
-artdir2 = downloaddir / "2_articles"
-artdir3 = downloaddir / "3_articles"
-pagesdir = downloaddir / "4_pages"
-tocdir = downloaddir / "toc"
-
 # If journal_latest=True =>
 # journal_year, journal_month and journal_issue must be se to None
 journal_latest = True
@@ -67,12 +49,6 @@ journal_cover_url = (
 sleep_time = (5, 10)
 
 # %%
-# If set to True, existing files will not be deleted
-# before downloading the new ones
-continue_download = True
-delete_existing = False
-
-# %%
 assert isinstance(journal_latest, bool)
 if not journal_latest:
     assert journal_year >= 1900
@@ -87,22 +63,8 @@ else:
     assert journal_issue is None
 
 # %%
-assert datadir.is_dir()
-if downloaddir.is_dir() and (not continue_download) and delete_existing:
-    logging.info(f"Removing previous download directory: {downloaddir}")
-    shutil.rmtree(downloaddir)
-downloaddir.mkdir(parents=True, exist_ok=continue_download)
-artdir1.mkdir(parents=True, exist_ok=continue_download)
-artdir2.mkdir(parents=True, exist_ok=continue_download)
-artdir3.mkdir(parents=True, exist_ok=continue_download)
-pagesdir.mkdir(parents=True, exist_ok=continue_download)
-tocdir.mkdir(parents=True, exist_ok=continue_download)
 
 
-# %% [markdown]
-# # Classes
-
-# %%
 class FullPageLayout(MultiColumnLayout):
     """
     A borb's page layout with no margins
@@ -416,30 +378,89 @@ logging.info("Start")
 logging.info("Python version: " + sys.executable)
 
 # %%
+# argparse
+parser = argparse.ArgumentParser(
+    prog='proquest-dl',
+    description='Download journal issues from ProQuest')
+parser.add_argument('publication_id',
+                    action='store',
+                    help="The ID of the publication on ProQuest. "
+                    "For example, 41716 for The Economist or "
+                    "35850 for MIT Technology Review")
+parser.add_argument('--firefox-profile-path',
+                    action='store', default=None)
+parser.add_argument('--data-dir',
+                    action='store', default="../data")
+parser.add_argument('--headless',
+                    action='store_true', default=False)
+parser.add_argument('--browser-app',
+                    action='store', default="firefox")
+parser.add_argument('--geckodriver-path',
+                    action='store', default="/usr/bin/geckodriver")
+parser.add_argument('--continue-download',
+                    action='store_true', default=False)
+args = parser.parse_args()
+print(args)
+
+# Make variables
+proquest_url = f"https://www.proquest.com/publication/{args.publication_id}"
+
+# Make directories
+datadir = Path(args.data_dir).resolve()
+assert (datadir.is_dir())
+downloaddir = datadir / "download"
+artdir1 = downloaddir / "1_articles"
+artdir2 = downloaddir / "2_articles"
+artdir3 = downloaddir / "3_articles"
+pagesdir = downloaddir / "4_pages"
+tocdir = downloaddir / "toc"
+
+assert datadir.is_dir()
+if downloaddir.is_dir() and (not args.continue_download):
+    logging.info(f"Removing previous download directory: {downloaddir}")
+    shutil.rmtree(downloaddir)
+downloaddir.mkdir(parents=True, exist_ok=args.continue_download)
+artdir1.mkdir(parents=True, exist_ok=args.continue_download)
+artdir2.mkdir(parents=True, exist_ok=args.continue_download)
+artdir3.mkdir(parents=True, exist_ok=args.continue_download)
+pagesdir.mkdir(parents=True, exist_ok=args.continue_download)
+tocdir.mkdir(parents=True, exist_ok=args.continue_download)
+
+# %%
 # Open web browser
 scraper = ProQuestWebScraper(
-    publication_id=publication_id,
+    publication_id=args.publication_id,
     artdir1=artdir1,
-    tocdir=tocdir,
+    tocdir=tocdir
 )
-scraper.get_browser(browser_app, headless_browser)
+scraper.get_browser(browser_app=args.browser_app,
+                    headless_browser=args.headless,
+                    firefox_profile_path=args.firefox_profile_path,
+                    geckodriver_path=args.geckodriver_path
+                    )
 
 # %%
 # Login using university credentials
 # This is my own code for my university
 # Write the code for your university or manually login each time
 # Comment out the following line
-mylogin(scraper.browser, datadir)
+# mylogin(scraper.browser, datadir)
+scraper.browser.get("https://www.duckduckgo.com")
+time.sleep(10)
+first_window = scraper.browser.window_handles[0]
+scraper.browser.switch_to.window(first_window)
+time.sleep(2)
 
 # %%
 # Connect to ProQuest website
 logging.info(f"Connecting to ProQuest URL={proquest_url}")
 scraper.browser.get(proquest_url)
+input("Login then press Enter to continue...")
 
 # %%
 # Reject cookies
-time.sleep(4)
-scraper.reject_cookies()
+# time.sleep(4)
+# scraper.reject_cookies()
 
 # %%
 # Wait for black background to go away
@@ -450,7 +471,7 @@ time.sleep(2)
 # %%
 # Get publication name
 issue = Issue()
-issue.publication_id = publication_id
+issue.publication_id = args.publication_id
 issue.publication_name = scraper.get_publication_name()
 logging.info(f"publication_name='{issue.publication_name}'")
 
@@ -528,7 +549,7 @@ insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
 
 # %%
 # Download cover
-if publication_id == known_publication_ids["The Economist"]:
+if args.publication_id == known_publication_ids["The Economist"]:
     # Build URL for The Economist's cover
     ts = issue.date.strftime("%Y%m%d")
     journal_cover_url = (

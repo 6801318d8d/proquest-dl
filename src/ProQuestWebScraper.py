@@ -244,7 +244,8 @@ class ProQuestWebScraper:
             except NoSuchElementException:
                 continue
 
-            article = Article(title=title, pages=pages, pdfurl=pdfurl, is_toc=is_toc)
+            article = Article(title=title, pages=pages,
+                              pdfurl=pdfurl, is_toc=is_toc)
             issue.articles.append(article)
 
     def get_art_count(self):
@@ -283,17 +284,21 @@ class ProQuestWebScraper:
         browser_app="firefox",
         headless_browser=False,
         geckodriver_path=None,
+        firefox_profile_path=None
     ):
         self.browser = None
         if browser_app == "firefox":
             options = webdriver.FirefoxOptions()
             if headless_browser:
                 options.add_argument("--headless")
+            if firefox_profile_path:
+                ffprof = webdriver.FirefoxProfile(firefox_profile_path)
+                options.profile = ffprof
+            service = None
             if geckodriver_path:
                 service = webdriver.FirefoxService(
-                    executable_path=str(geckodriver_path))
-            else:
-                service = None
+                    executable_path=str(geckodriver_path)
+                )
             self.browser = webdriver.Firefox(options=options, service=service)
         elif browser_app == "chrome":
             options = webdriver.ChromeOptions()
@@ -344,7 +349,7 @@ class ProQuestWebScraper:
         select.select_by_index(journal_issue)
 
         # Click on "View Issue" button
-        time.sleep(2)
+        time.sleep(4)
         self.click_view_issue_btn()
         time.sleep(5)
 
