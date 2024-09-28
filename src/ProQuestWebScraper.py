@@ -128,10 +128,15 @@ class ProQuestWebScraper:
     def download_article(self, issue, sleep_time, article):
 
         # Generate PDF file name
+        filen = ("pages_" +
+                 str(min(article.pages)) +
+                 "-" +
+                 str(max(article.pages)) +
+                 ".pdf")
         if article.pages != "toc":
-            pdffn = self.artdir1 / ("pages_" + article.pages + ".pdf")
+            pdffn = self.artdir1 / filen
         else:
-            pdffn = self.tocdir / ("pages_" + article.pages + ".pdf")
+            pdffn = self.tocdir / filen
         if pdffn.is_file():
             logging.info(
                 f"Skipping page(s) {article.pages} because already downloaded")
@@ -316,7 +321,7 @@ class ProQuestWebScraper:
         time.sleep(5)
 
     def click_view_issue_btn(self):
-        view_issue_css = "input[value='View issue']"
+        view_issue_css = "input[value='Show issue contents']"
         view_issue = self.wait_element_to_be_clickable_css(
             view_issue_css,
             timeout=30,
