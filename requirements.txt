@@ -1,6 +1,0 @@
-selenium
-natsort
-pandas
-PyPDF2
-borb
-tqdm

@@ -365,265 +365,269 @@ def get_pages_from_file(pagesfn):
 # %%
 # # Main
 
-# %%
-logging.basicConfig(
-    force=True,
-    level=logging.INFO,
-    format=("[%(asctime)s] [%(filename)s:%(funcName)s] "
-            "[%(levelname)s] %(message)s")
-)
+def main():
 
-# %%
-logging.info("Start")
-logging.info("Python version: " + sys.executable)
-
-# %%
-# argparse
-parser = argparse.ArgumentParser(
-    prog='proquest-dl',
-    description='Download journal issues from ProQuest')
-parser.add_argument('publication_id',
-                    action='store',
-                    help="The ID of the publication on ProQuest. "
-                    "For example, 41716 for The Economist or "
-                    "35850 for MIT Technology Review")
-parser.add_argument('--firefox-profile-path',
-                    action='store', default=None)
-parser.add_argument('--data-dir',
-                    action='store', default="../data")
-parser.add_argument('--headless',
-                    action='store_true', default=False)
-parser.add_argument('--browser-app',
-                    action='store', default="firefox")
-parser.add_argument('--geckodriver-path',
-                    action='store', default="/usr/bin/geckodriver")
-parser.add_argument('--continue-download',
-                    action='store_true', default=False)
-args = parser.parse_args()
-print(args)
-
-# Make variables
-proquest_url = f"https://www.proquest.com/publication/{args.publication_id}"
-
-# Make directories
-datadir = Path(args.data_dir).resolve()
-assert (datadir.is_dir())
-downloaddir = datadir / "download"
-artdir1 = downloaddir / "1_articles"
-artdir2 = downloaddir / "2_articles"
-artdir3 = downloaddir / "3_articles"
-pagesdir = downloaddir / "4_pages"
-tocdir = downloaddir / "toc"
-
-assert datadir.is_dir()
-if downloaddir.is_dir() and (not args.continue_download):
-    logging.info(f"Removing previous download directory: {downloaddir}")
-    shutil.rmtree(downloaddir)
-downloaddir.mkdir(parents=True, exist_ok=args.continue_download)
-artdir1.mkdir(parents=True, exist_ok=args.continue_download)
-artdir2.mkdir(parents=True, exist_ok=args.continue_download)
-artdir3.mkdir(parents=True, exist_ok=args.continue_download)
-pagesdir.mkdir(parents=True, exist_ok=args.continue_download)
-tocdir.mkdir(parents=True, exist_ok=args.continue_download)
-
-# %%
-# Open web browser
-scraper = ProQuestWebScraper(
-    publication_id=args.publication_id,
-    artdir1=artdir1,
-    tocdir=tocdir
-)
-scraper.get_browser(browser_app=args.browser_app,
-                    headless_browser=args.headless,
-                    firefox_profile_path=args.firefox_profile_path,
-                    geckodriver_path=args.geckodriver_path
-                    )
-
-# %%
-# Login using university credentials
-# This is my own code for my university
-# Write the code for your university or manually login each time
-# Comment out the following line
-# mylogin(scraper.browser, datadir)
-scraper.browser.get("https://www.duckduckgo.com")
-time.sleep(10)
-first_window = scraper.browser.window_handles[0]
-scraper.browser.switch_to.window(first_window)
-time.sleep(2)
-
-# %%
-# Connect to ProQuest website
-logging.info(f"Connecting to ProQuest URL={proquest_url}")
-scraper.browser.get(proquest_url)
-input("Login then press Enter to continue...")
-
-# %%
-# Reject cookies
-# time.sleep(4)
-# scraper.reject_cookies()
-
-# %%
-# Wait for black background to go away
-# Otherwise we cannot click on buttons
-# Despite waiting for the buttons to be clickable
-time.sleep(2)
-
-# %%
-# Get publication name
-issue = Issue()
-issue.publication_id = args.publication_id
-issue.publication_name = scraper.get_publication_name()
-logging.info(f"publication_name='{issue.publication_name}'")
-
-# %%
-# Select issue to download
-if not journal_latest:
-    scraper.select_issue(journal_year, journal_month, journal_issue)
-
-# %%
-# Get number of articles to download
-count = scraper.get_art_count()
-logging.info(f"Number of articles to download: {count}")
-
-# %%
-# Get date in which the issue was released
-issue.date = scraper.get_issue_date()
-logging.info(f"Issue date of publication: {issue.date}")
-
-# %%
-# Build file path in which
-# the resulting PDF file will be saved
-issue.build_final_fp(datadir)
-
-# %%
-# Download list of articles
-scraper.retrieve_articles_list(issue)
-
-# %%
-# Downloads single articles
-scraper.download_articles(issue, sleep_time)
-
-# %%
-# Close web browser
-scraper.browser.close()
-
-# %%
-# Remove last page with copyright notice
-remove_last_page_from_articles(artdir1, artdir2)
-
-# %%
-# Remove CropBox from PDF files
-remove_cropbox_from_articles(artdir2, artdir3)
-
-# %%
-# Get size of a PDF page
-fn = next(artdir3.iterdir())
-logging.info(f"Using fn='{fn}'")
-issue.page_size = get_page_size(fn)
-
-# %%
-# If we have TOC, get page number and rename
-# (only for The Economist, which doesn't provide page numbers for its TOC)
-economist_rename_toc(issue, tocdir, artdir3)
-
-# %%
-# Generate TOC if we don't have one
-generate_toc(issue, tocdir, artdir3)
-
-# %%
-# Extract single pages from original PDF files
-extract_single_pages_from_pdfs(artdir3, pagesdir)
-
-# %%
-# Generate white page
-whitepdffp = downloaddir / "blank.pdf"
-doc: Document = Document()
-page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
-doc.add_page(page)
-with open(whitepdffp, "wb") as pdf_file_handle:
-    PDF.dumps(pdf_file_handle, doc)
-
-# %%
-# Put white pages where needed
-insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
-
-# %%
-# Download cover
-if args.publication_id == known_publication_ids["The Economist"]:
-    # Build URL for The Economist's cover
-    ts = issue.date.strftime("%Y%m%d")
-    journal_cover_url = (
-        f"https://www.economist.com/img/b/1280/1684/90"
-        f"/media-assets/image/{ts}_DE_EU.jpg"
+    logging.basicConfig(
+        force=True,
+        level=logging.INFO,
+        format=("[%(asctime)s] [%(filename)s:%(funcName)s] "
+                "[%(levelname)s] %(message)s")
     )
-if journal_cover_url:
-    # Download cover from web
-    data = requests.get(journal_cover_url).content
-    ext = journal_cover_url.split(".")[-1]
-    logging.info(f"ext={ext}")
-    coverfp = downloaddir / ("cover." + ext)
-    logging.info(f"coverfp={coverfp}")
-    with open(coverfp, "wb") as fh:
-        fh.write(data)
-    # Remove the white page we have instead of the cover
-    page1fn = pagesdir / "pages_1.pdf"
-    if page1fn.is_file():
-        page1fn.unlink()
-    # Resize cover page image
-    coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
-    magick_page_size = str(
-        issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
-    cmd = [
-        "magick",
-        str(coverfp),
-        "-resize",
-        magick_page_size,
-        str(coverfp2),
-    ]
-    logging.info(f"Command to resize cover page: '{cmd}'")
-    ret = subprocess.run(cmd)
-    assert ret.returncode == 0
-    # Convert cover page form image to PDF
+
+    # %%
+    logging.info("Start")
+    logging.info("Python version: " + sys.executable)
+
+    # %%
+    # argparse
+    parser = argparse.ArgumentParser(
+        prog='proquest-dl',
+        description='Download journal issues from ProQuest')
+    parser.add_argument('publication_id',
+                        action='store',
+                        help="The ID of the publication on ProQuest. "
+                        "For example, 41716 for The Economist or "
+                        "35850 for MIT Technology Review")
+    parser.add_argument('--firefox-profile-path',
+                        action='store', default=None)
+    parser.add_argument('--data-dir',
+                        action='store', default="../data")
+    parser.add_argument('--headless',
+                        action='store_true', default=False)
+    parser.add_argument('--browser-app',
+                        action='store', default="firefox")
+    parser.add_argument('--geckodriver-path',
+                        action='store', default="/usr/bin/geckodriver")
+    parser.add_argument('--continue-download',
+                        action='store_true', default=False)
+    args = parser.parse_args()
+    print(args)
+
+    # Make variables
+    proquest_url = f"https://www.proquest.com/publication/{args.publication_id}"
+
+    # Make directories
+    datadir = Path(args.data_dir).resolve()
+    assert (datadir.is_dir())
+    downloaddir = datadir / "download"
+    artdir1 = downloaddir / "1_articles"
+    artdir2 = downloaddir / "2_articles"
+    artdir3 = downloaddir / "3_articles"
+    pagesdir = downloaddir / "4_pages"
+    tocdir = downloaddir / "toc"
+
+    assert datadir.is_dir()
+    if downloaddir.is_dir() and (not args.continue_download):
+        logging.info(f"Removing previous download directory: {downloaddir}")
+        shutil.rmtree(downloaddir)
+    downloaddir.mkdir(parents=True, exist_ok=args.continue_download)
+    artdir1.mkdir(parents=True, exist_ok=args.continue_download)
+    artdir2.mkdir(parents=True, exist_ok=args.continue_download)
+    artdir3.mkdir(parents=True, exist_ok=args.continue_download)
+    pagesdir.mkdir(parents=True, exist_ok=args.continue_download)
+    tocdir.mkdir(parents=True, exist_ok=args.continue_download)
+
+    # %%
+    # Open web browser
+    scraper = ProQuestWebScraper(
+        publication_id=args.publication_id,
+        artdir1=artdir1,
+        tocdir=tocdir
+    )
+    scraper.get_browser(browser_app=args.browser_app,
+                        headless_browser=args.headless,
+                        firefox_profile_path=args.firefox_profile_path,
+                        geckodriver_path=args.geckodriver_path
+                        )
+
+    # %%
+    # Login using university credentials
+    # This is my own code for my university
+    # Write the code for your university or manually login each time
+    # Comment out the following line
+    # mylogin(scraper.browser, datadir)
+    scraper.browser.get("https://www.duckduckgo.com")
+    time.sleep(10)
+    first_window = scraper.browser.window_handles[0]
+    scraper.browser.switch_to.window(first_window)
+    time.sleep(2)
+
+    # %%
+    # Connect to ProQuest website
+    logging.info(f"Connecting to ProQuest URL={proquest_url}")
+    scraper.browser.get(proquest_url)
+    input("Login then press Enter to continue...")
+
+    # %%
+    # Reject cookies
+    # time.sleep(4)
+    # scraper.reject_cookies()
+
+    # %%
+    # Wait for black background to go away
+    # Otherwise we cannot click on buttons
+    # Despite waiting for the buttons to be clickable
+    time.sleep(2)
+
+    # %%
+    # Get publication name
+    issue = Issue()
+    issue.publication_id = args.publication_id
+    issue.publication_name = scraper.get_publication_name()
+    logging.info(f"publication_name='{issue.publication_name}'")
+
+    # %%
+    # Select issue to download
+    if not journal_latest:
+        scraper.select_issue(journal_year, journal_month, journal_issue)
+
+    # %%
+    # Get number of articles to download
+    count = scraper.get_art_count()
+    logging.info(f"Number of articles to download: {count}")
+
+    # %%
+    # Get date in which the issue was released
+    issue.date = scraper.get_issue_date()
+    logging.info(f"Issue date of publication: {issue.date}")
+
+    # %%
+    # Build file path in which
+    # the resulting PDF file will be saved
+    issue.build_final_fp(datadir)
+
+    # %%
+    # Download list of articles
+    scraper.retrieve_articles_list(issue)
+
+    # %%
+    # Downloads single articles
+    scraper.download_articles(issue, sleep_time)
+
+    # %%
+    # Close web browser
+    scraper.browser.close()
+
+    # %%
+    # Remove last page with copyright notice
+    remove_last_page_from_articles(artdir1, artdir2)
+
+    # %%
+    # Remove CropBox from PDF files
+    remove_cropbox_from_articles(artdir2, artdir3)
+
+    # %%
+    # Get size of a PDF page
+    fn = next(artdir3.iterdir())
+    logging.info(f"Using fn='{fn}'")
+    issue.page_size = get_page_size(fn)
+
+    # %%
+    # If we have TOC, get page number and rename
+    # (only for The Economist, which doesn't provide page numbers for its TOC)
+    economist_rename_toc(issue, tocdir, artdir3)
+
+    # %%
+    # Generate TOC if we don't have one
+    generate_toc(issue, tocdir, artdir3)
+
+    # %%
+    # Extract single pages from original PDF files
+    extract_single_pages_from_pdfs(artdir3, pagesdir)
+
+    # %%
+    # Generate white page
+    whitepdffp = downloaddir / "blank.pdf"
     doc: Document = Document()
     page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
-    layout: PageLayout = FullPageLayout(page)
-    # Reduce image size a little bit to avoid borb
-    # throwing out an exception due to not having
-    # enough space on the page
-    width = int(float(issue.page_size[0])*0.95)
-    height = int(float(issue.page_size[1])*0.95)
-    layout.add(
-        Image(
-            coverfp,
-            width=width,
-            height=height,
-        ))
     doc.add_page(page)
-    with open(page1fn, "wb") as pdf_file_handle:
+    with open(whitepdffp, "wb") as pdf_file_handle:
         PDF.dumps(pdf_file_handle, doc)
 
-# %%
-# Merge pages into final PDF file
-outfp = downloaddir / "output.pdf"
-merge_pdf(pagesdir, outfp)
+    # %%
+    # Put white pages where needed
+    insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
 
-# %%
-# Insert bookmarks
-infp = outfp
-outfp = downloaddir / "output2.pdf"
-insert_bookmarks(issue, infp, outfp)
+    # %%
+    # Download cover
+    if args.publication_id == known_publication_ids["The Economist"]:
+        # Build URL for The Economist's cover
+        ts = issue.date.strftime("%Y%m%d")
+        journal_cover_url = (
+            f"https://www.economist.com/img/b/1280/1684/90"
+            f"/media-assets/image/{ts}_DE_EU.jpg"
+        )
+    if journal_cover_url:
+        # Download cover from web
+        data = requests.get(journal_cover_url).content
+        ext = journal_cover_url.split(".")[-1]
+        logging.info(f"ext={ext}")
+        coverfp = downloaddir / ("cover." + ext)
+        logging.info(f"coverfp={coverfp}")
+        with open(coverfp, "wb") as fh:
+            fh.write(data)
+        # Remove the white page we have instead of the cover
+        page1fn = pagesdir / "pages_1.pdf"
+        if page1fn.is_file():
+            page1fn.unlink()
+        # Resize cover page image
+        coverfp2 = coverfp.parent / (coverfp.stem + "_resized" + coverfp.suffix)
+        magick_page_size = str(
+            issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
+        cmd = [
+            "magick",
+            str(coverfp),
+            "-resize",
+            magick_page_size,
+            str(coverfp2),
+        ]
+        logging.info(f"Command to resize cover page: '{cmd}'")
+        ret = subprocess.run(cmd)
+        assert ret.returncode == 0
+        # Convert cover page form image to PDF
+        doc: Document = Document()
+        page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
+        layout: PageLayout = FullPageLayout(page)
+        # Reduce image size a little bit to avoid borb
+        # throwing out an exception due to not having
+        # enough space on the page
+        width = int(float(issue.page_size[0])*0.95)
+        height = int(float(issue.page_size[1])*0.95)
+        layout.add(
+            Image(
+                coverfp,
+                width=width,
+                height=height,
+            ))
+        doc.add_page(page)
+        with open(page1fn, "wb") as pdf_file_handle:
+            PDF.dumps(pdf_file_handle, doc)
 
-# %%
-# Compress final PDF file
-infp = outfp
-outfp = downloaddir / "output_bookmarked_compressed.pdf"
-cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infp), str(outfp)]
-ret = subprocess.run(cmd)
-assert ret.returncode == 0
+    # %%
+    # Merge pages into final PDF file
+    outfp = downloaddir / "output.pdf"
+    merge_pdf(pagesdir, outfp)
 
-# %%
-# Move PDF to "final" subfolder
-shutil.move(outfp, issue.finalfp)
+    # %%
+    # Insert bookmarks
+    infp = outfp
+    outfp = downloaddir / "output2.pdf"
+    insert_bookmarks(issue, infp, outfp)
 
-# %%
-logging.info("Ended")
+    # %%
+    # Compress final PDF file
+    infp = outfp
+    outfp = downloaddir / "output_bookmarked_compressed.pdf"
+    cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infp), str(outfp)]
+    ret = subprocess.run(cmd)
+    assert ret.returncode == 0
+
+    # %%
+    # Move PDF to "final" subfolder
+    shutil.move(outfp, issue.finalfp)
+
+    # %%
+    logging.info("Ended")
+
+if __name__== "__main__":
+    main()

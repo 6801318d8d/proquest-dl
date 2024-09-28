@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "proquest-dl"
+version = "0.0.1"
+description = "Download magazines from ProQuest (e.g. The Economist, MIT Technology Review)"
+authors = ["Stephanie W Franco <talia1984@yahoo.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+selenium = "^4.25.0"
+natsort = "^8.4.0"
+pandas = "^2.2.3"
+PyPDF2 = "^3.0.1"
+borb = "^2.1.25"
+tqdm = "^4.66.5"
+
+[tool.poetry.scripts]
+proquest-dl = 'proquest_dl.proquest_dl:main'
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
