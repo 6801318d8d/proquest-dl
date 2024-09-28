@@ -69,8 +69,8 @@ sleep_time = (5, 10)
 # %%
 # If set to True, existing files will not be deleted
 # before downloading the new ones
-continue_download = False
-delete_existing = True
+continue_download = True
+delete_existing = False
 
 # %%
 assert isinstance(journal_latest, bool)
@@ -132,12 +132,13 @@ class FullPageLayout(MultiColumnLayout):
 def insert_bookmarks(issue, infn, outfn):
     # Save bookmark into txt file
     bookmarkfn = downloaddir / "bookmark.txt"
+    txt = ""
+    for article in issue.articles:
+        if not article.pages:
+            continue
+        txt += '+"' + article.title + '"|' + str(article.pages[0]) + "\n"
     with open(bookmarkfn, "w") as fh:
-        all_titles = [article.title for article in issue.articles]
-        all_pages = [article.pages for article in issue.articles]
-        for titlei, title in enumerate(all_titles):
-            fh.write('+"' + title + '"|' +
-                     all_pages[titlei].split("-")[0] + "\n")
+        fh.write(txt)
     # Put bookmark into PDF
     pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
 
