@@ -398,10 +398,9 @@ def main():
                         type=int,
                         metavar=("YEAR", "MONTH", "ISSUE"),
                         help=("Date of the publication to download. "
-                              "If everything is None, it will download the latest issue"),
+                              "If everything is None, it will download the latest issue."),
                         action='store', default=[None, None, None])
     args = parser.parse_args()
-    print(args)
 
     # Make variables
     proquest_url = f"https://www.proquest.com/publication/{
