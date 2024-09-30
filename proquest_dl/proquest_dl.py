@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import typing
+import tempfile
 from decimal import Decimal
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from borb.pdf.canvas.geometry.rectangle import Rectangle
 from borb.toolkit import LocationFilter, SimpleTextExtraction
 from natsort import natsorted
 
-import proquest_dl.pdfbookmarker
+import proquest_dl.pdfbookmarker as pdfbookmarker
 from proquest_dl.Issue import Issue
 from proquest_dl.ProQuestWebScraper import ProQuestWebScraper
 
@@ -39,8 +40,6 @@ journal_cover_url = (
 )
 
 sleep_time = (5, 10)
-
-# %%
 
 # %%
 
@@ -71,14 +70,14 @@ class FullPageLayout(MultiColumnLayout):
 # Functions
 
 # %%
-def insert_bookmarks(issue, infn, outfn):
+def insert_bookmarks(downloaddir, issue, infn, outfn):
     # Save bookmark into txt file
-    bookmarkfn = downloaddir / "bookmark.txt"
     txt = ""
     for article in issue.articles:
         if not article.pages:
             continue
         txt += '+"' + article.title + '"|' + str(article.pages[0]) + "\n"
+    bookmarkfn = downloaddir / "bookmark.txt"
     with open(bookmarkfn, "w") as fh:
         fh.write(txt)
     # Put bookmark into PDF
@@ -373,13 +372,18 @@ def main():
                         action='store',
                         help="Path to Firefox profile",
                         default=None)
-    parser.add_argument('--data-dir',
+    parser.add_argument('--tmpdir',
                         action='store',
-                        help="Path to data directory",
-                        default="../data")
+                        help="Path to temporary directory",
+                        default=None)
+    parser.add_argument('--outdir',
+                        action='store',
+                        help="Path to output directory",
+                        default=".")
     parser.add_argument('--headless',
                         action='store_true',
-                        help="Run browser in headless mode (without showing UI)",
+                        help=("Run browser in headless mode "
+                              "(without showing UI)"),
                         default=False)
     parser.add_argument('--browser-app',
                         action='store',
@@ -398,7 +402,8 @@ def main():
                         type=int,
                         metavar=("YEAR", "MONTH", "ISSUE"),
                         help=("Date of the publication to download. "
-                              "If everything is None, it will download the latest issue."),
+                              "If everything is None, it will download "
+                              "the latest issue."),
                         action='store', default=[None, None, None])
     args = parser.parse_args()
 
@@ -429,16 +434,18 @@ def main():
         assert journal_issue is None
 
     # Directories variables
-    datadir = Path(args.data_dir).resolve()
-    assert (datadir.is_dir())
-    downloaddir = datadir / "download"
+    if args.tmpdir:
+        tmpdir = Path(args.tmpdir).resolve()
+        assert (tmpdir.is_dir())
+    else:
+        tmpdir = Path(tempfile.mkdtemp())
+    downloaddir = tmpdir / "download"
     artdir1 = downloaddir / "1_articles"
     artdir2 = downloaddir / "2_articles"
     artdir3 = downloaddir / "3_articles"
     pagesdir = downloaddir / "4_pages"
     tocdir = downloaddir / "toc"
 
-    assert datadir.is_dir()
     if downloaddir.is_dir() and (not args.continue_download):
         logging.info(f"Removing previous download directory: {downloaddir}")
         shutil.rmtree(downloaddir)
@@ -478,7 +485,8 @@ def main():
     # Connect to ProQuest website
     logging.info(f"Connecting to ProQuest URL={proquest_url}")
     scraper.browser.get(proquest_url)
-    input("Login then press Enter to continue...")
+    # input("Login then press Enter to continue...")
+    time.sleep(10)
 
     # %%
     # Reject cookies
@@ -489,7 +497,7 @@ def main():
     # Wait for black background to go away
     # Otherwise we cannot click on buttons
     # Despite waiting for the buttons to be clickable
-    time.sleep(2)
+    # time.sleep(2)
 
     # %%
     # Get publication name
@@ -497,6 +505,12 @@ def main():
     issue.publication_id = args.publication_id
     issue.publication_name = scraper.get_publication_name()
     logging.info(f"publication_name='{issue.publication_name}'")
+
+    # %%
+    # Build output PDF file path
+    pdf_fp = args.outdir/issue.build_final_fp()
+    logging.info(f"Output file: {pdf_fp}")
+    assert not pdf_fp.is_file()
 
     # %%
     # Select issue to download
@@ -516,7 +530,7 @@ def main():
     # %%
     # Build file path in which
     # the resulting PDF file will be saved
-    issue.build_final_fp(datadir)
+    issue.build_final_fp(tmpdir)
 
     # %%
     # Download list of articles
@@ -635,7 +649,7 @@ def main():
     # Insert bookmarks
     infp = outfp
     outfp = downloaddir / "output2.pdf"
-    insert_bookmarks(issue, infp, outfp)
+    insert_bookmarks(downloaddir, issue, infp, outfp)
 
     # %%
     # Compress final PDF file
@@ -647,7 +661,10 @@ def main():
 
     # %%
     # Move PDF to "final" subfolder
-    shutil.move(outfp, issue.finalfp)
+    shutil.move(outfp, pdf_fp)
+
+    if not args.tmpdir:
+        shutil.rmtree(tmpdir)
 
     # %%
     logging.info("Ended")

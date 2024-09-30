@@ -18,7 +18,4 @@ class Issue:
         """
         ts = self.date.strftime("%Y-%m-%d")
         pnamecl = self.publication_name.replace(" ", "").strip()
-        finaldir = datadir / "final" / self.publication_name
-        finaldir.mkdir(parents=True, exist_ok=True)
-        self.finalfp = finaldir / (pnamecl + "-" + ts + ".pdf")
-        assert not self.finalfp.is_file()
+        return pnamecl + "-" + ts + ".pdf"

@@ -320,29 +320,37 @@ class ProQuestWebScraper:
 
     def select_issue(self, journal_year, journal_month, journal_issue):
         # Select year
+        logging.info(f"Selecting year: {journal_year}")
         try:
             select_element = self.browser.find_element(
-                By.CSS_SELECTOR, "select#yearSelected")
+                By.CSS_SELECTOR,
+                "select#yearSelected")
         except NoSuchElementException:
             raise Exception("Cannot find year select box")
         select = Select(select_element)
         select.select_by_visible_text(str(journal_year))
+        time.sleep(2)
 
         # Select month
+        month_date = datetime.date(year=1, month=journal_month, day=1)
+        month_locale_full_name = month_date.strftime("%B")
+        logging.info(f"Selecting month: {month_locale_full_name}")
         try:
             select_element = self.browser.find_element(
-                By.CSS_SELECTOR, "select#monthSelected")
+                By.CSS_SELECTOR,
+                "select#monthSelected")
         except NoSuchElementException:
             raise Exception("Cannot find month select box")
         select = Select(select_element)
-        month_date = datetime.date(year=1, month=journal_month, day=1)
-        month_locale_full_name = month_date.strftime("%B")
         select.select_by_visible_text(month_locale_full_name)
+        time.sleep(2)
 
         # Select issue
+        logging.info(f"Selecting issue: {journal_issue}")
         try:
             select_element = self.browser.find_element(
-                By.CSS_SELECTOR, "select#issueSelected")
+                By.CSS_SELECTOR,
+                "select#issueSelected")
         except NoSuchElementException:
             raise Exception("Cannot find issue select box")
         select = Select(select_element)

@@ -33,5 +33,5 @@ You will need `qpdf` and `pandoc` in your PATH.
     git clone https://github.com/6801318d8d/proquest-dl
     cd proquest-dl
     python -m pip install .
-    proquest-dl 35850 --data-dir "./data" --firefox-profile-path "/home/USERNAME/.mozilla/firefox/PROFILE"
+    proquest-dl 35850 --firefox-profile-path "/home/USERNAME/.mozilla/firefox/PROFILE"
     ```
