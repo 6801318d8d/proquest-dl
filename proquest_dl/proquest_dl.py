@@ -470,34 +470,14 @@ def main():
                         )
 
     # %%
-    # Login using university credentials
-    # This is my own code for my university
-    # Write the code for your university or manually login each time
-    # Comment out the following line
-    # mylogin(scraper.browser, datadir)
-    scraper.browser.get("https://www.duckduckgo.com")
-    time.sleep(10)
-    first_window = scraper.browser.window_handles[0]
-    scraper.browser.switch_to.window(first_window)
-    time.sleep(2)
-
-    # %%
     # Connect to ProQuest website
     logging.info(f"Connecting to ProQuest URL={proquest_url}")
     scraper.browser.get(proquest_url)
-    # input("Login then press Enter to continue...")
-    time.sleep(10)
-
-    # %%
-    # Reject cookies
-    # time.sleep(4)
-    # scraper.reject_cookies()
-
-    # %%
-    # Wait for black background to go away
-    # Otherwise we cannot click on buttons
-    # Despite waiting for the buttons to be clickable
-    # time.sleep(2)
+    input("Login then press Enter to continue...")
+    # time.sleep(10)
+    first_window = scraper.browser.window_handles[0]
+    scraper.browser.switch_to.window(first_window)
+    time.sleep(2)
 
     # %%
     # Get publication name
@@ -507,15 +487,13 @@ def main():
     logging.info(f"publication_name='{issue.publication_name}'")
 
     # %%
-    # Build output PDF file path
-    pdf_fp = args.outdir/issue.build_final_fp()
-    logging.info(f"Output file: {pdf_fp}")
-    assert not pdf_fp.is_file()
-
-    # %%
     # Select issue to download
     if not journal_latest:
-        scraper.select_issue(journal_year, journal_month, journal_issue)
+        scraper.select_issue(
+            journal_year,
+            journal_month,
+            journal_issue,
+        )
 
     # %%
     # Get number of articles to download
@@ -528,9 +506,11 @@ def main():
     logging.info(f"Issue date of publication: {issue.date}")
 
     # %%
-    # Build file path in which
-    # the resulting PDF file will be saved
-    issue.build_final_fp(tmpdir)
+    # Build output PDF file path
+    args.outdir = Path(args.outdir)
+    pdf_fp = args.outdir/issue.build_final_fp()
+    logging.info(f"Output file: {pdf_fp}")
+    assert not pdf_fp.is_file()
 
     # %%
     # Download list of articles
@@ -546,10 +526,12 @@ def main():
 
     # %%
     # Remove last page with copyright notice
+    logging.info("Removing last pages with copyright notice")
     remove_last_page_from_articles(artdir1, artdir2)
 
     # %%
     # Remove CropBox from PDF files
+    logging.info("Removing CropBox")
     remove_cropbox_from_articles(artdir2, artdir3)
 
     # %%
@@ -569,10 +551,12 @@ def main():
 
     # %%
     # Extract single pages from original PDF files
+    logging.info("Extracting single pages from PDFs")
     extract_single_pages_from_pdfs(artdir3, pagesdir)
 
     # %%
     # Generate white page
+    logging.info("Generating white page")
     whitepdffp = downloaddir / "blank.pdf"
     doc: Document = Document()
     page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
@@ -582,10 +566,12 @@ def main():
 
     # %%
     # Put white pages where needed
+    logging.info("Inserting white pages")
     insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
 
     # %%
     # Download cover
+    logging.info("Downloading cover")
     if args.publication_id == known_publication_ids["The Economist"]:
         # Build URL for The Economist's cover
         ts = issue.date.strftime("%Y%m%d")
@@ -642,17 +628,20 @@ def main():
 
     # %%
     # Merge pages into final PDF file
+    logging.info("Merging")
     outfp = downloaddir / "output.pdf"
     merge_pdf(pagesdir, outfp)
 
     # %%
     # Insert bookmarks
+    logging.info("Inserting bookmarks")
     infp = outfp
     outfp = downloaddir / "output2.pdf"
     insert_bookmarks(downloaddir, issue, infp, outfp)
 
     # %%
     # Compress final PDF file
+    logging.info("Compressing PDF")
     infp = outfp
     outfp = downloaddir / "output_bookmarked_compressed.pdf"
     cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infp), str(outfp)]
@@ -661,8 +650,8 @@ def main():
 
     # %%
     # Move PDF to "final" subfolder
+    logging.info("Moving PDF into final destination")
     shutil.move(outfp, pdf_fp)
-
     if not args.tmpdir:
         shutil.rmtree(tmpdir)
 

@@ -273,12 +273,6 @@ class ProQuestWebScraper:
             By.CSS_SELECTOR, css).text.strip()
         return publication_name
 
-    def reject_cookies(self):
-        # css = "button#onetrust-reject-all-handler"
-        css = "button#onetrust-accept-btn-handler"
-        el = self.wait_element_to_be_clickable_css(css)
-        el.click()
-
     def get_browser(
         self,
         browser_app="firefox",

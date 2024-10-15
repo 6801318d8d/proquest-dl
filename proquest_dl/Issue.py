@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from proquest_dl.Article import Article
+import re
 
 
 @dataclass
@@ -12,10 +13,10 @@ class Issue:
     page_size: tuple[float, float] = (0, 0)
     toc: bool = False
 
-    def build_final_fp(self, datadir):
+    def build_final_fp(self):
         """
         Build final file path and check we have not downloaded this issue yet
         """
         ts = self.date.strftime("%Y-%m-%d")
-        pnamecl = self.publication_name.replace(" ", "").strip()
+        pnamecl = re.sub(r"\s+", "", self.publication_name)
         return pnamecl + "-" + ts + ".pdf"
