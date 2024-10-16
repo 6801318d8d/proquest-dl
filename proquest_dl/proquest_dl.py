@@ -375,7 +375,7 @@ def main():
     parser.add_argument('--tmpdir',
                         action='store',
                         help="Path to temporary directory",
-                        default=None)
+                        default="./proquest-dl-temp")
     parser.add_argument('--outdir',
                         action='store',
                         help="Path to output directory",
@@ -435,11 +435,8 @@ def main():
 
     # Directories variables
     if args.tmpdir:
-        tmpdir = Path(args.tmpdir).resolve()
-        assert (tmpdir.is_dir())
-    else:
-        tmpdir = Path(tempfile.mkdtemp())
-    downloaddir = tmpdir / "download"
+        raise Exception(f"Error: temporary directory already exists. Did you forget --continue?")
+    downloaddir = args.tmpdir / "download"
     artdir1 = downloaddir / "1_articles"
     artdir2 = downloaddir / "2_articles"
     artdir3 = downloaddir / "3_articles"
@@ -652,8 +649,7 @@ def main():
     # Move PDF to "final" subfolder
     logging.info("Moving PDF into final destination")
     shutil.move(outfp, pdf_fp)
-    if not args.tmpdir:
-        shutil.rmtree(tmpdir)
+    shutil.rmtree(args.tmpdir)
 
     # %%
     logging.info("Ended")
