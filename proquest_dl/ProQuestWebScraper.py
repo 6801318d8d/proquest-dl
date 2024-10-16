@@ -239,8 +239,8 @@ class ProQuestWebScraper:
             # if we don't have a PDF file, skip it
             try:
                 locator = (By.CSS_SELECTOR, "a.format_pdf")
-                pdfurl = result_item.find_element(
-                    *locator).get_attribute("href")
+                pdfurl = result_item.find_element(*locator) \
+                                    .get_attribute("href")
             except NoSuchElementException:
                 continue
 

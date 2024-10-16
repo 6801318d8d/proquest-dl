@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 import typing
-import tempfile
+import jsonpickle
 from decimal import Decimal
 from pathlib import Path
 
@@ -435,7 +435,8 @@ def main():
 
     # Directories variables
     if args.tmpdir:
-        raise Exception(f"Error: temporary directory already exists. Did you forget --continue?")
+        raise Exception("Error: temporary directory already exists. "
+                        "Did you forget --continue?")
     downloaddir = args.tmpdir / "download"
     artdir1 = downloaddir / "1_articles"
     artdir2 = downloaddir / "2_articles"
@@ -503,15 +504,21 @@ def main():
     logging.info(f"Issue date of publication: {issue.date}")
 
     # %%
+    # Download list of articles
+    scraper.retrieve_articles_list(issue)
+
+    # %%
+    # Save issue to file
+    fp = args.tmpdir/"issue.json"
+    with open(fp, "w"):
+        jsonpickle.dump(issue, fp)
+
+    # %%
     # Build output PDF file path
     args.outdir = Path(args.outdir)
     pdf_fp = args.outdir/issue.build_final_fp()
     logging.info(f"Output file: {pdf_fp}")
     assert not pdf_fp.is_file()
-
-    # %%
-    # Download list of articles
-    scraper.retrieve_articles_list(issue)
 
     # %%
     # Downloads single articles
