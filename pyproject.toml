@@ -15,6 +15,7 @@ pandas = "^2.2.3"
 PyPDF2 = "^3.0.1"
 borb = "^2.1.25"
 tqdm = "^4.66.5"
+jsonpickle = "^3.3.0"
 
 [tool.poetry.scripts]
 proquest-dl = 'proquest_dl.proquest_dl:main'

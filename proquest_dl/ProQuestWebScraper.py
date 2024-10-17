@@ -161,6 +161,13 @@ class ProQuestWebScraper:
                    "because the file was already downloaded")
             logging.info(msg)
             return
+
+        if not article.pdfurl:
+            msg = (f"Skipping page(s) {article.pages} "
+                   "because there is no associated PDF")
+            logging.info(msg)
+            return
+
         logging.info(f"Downloading pages {article.pages}")
 
         # Browse to article URL
@@ -242,7 +249,9 @@ class ProQuestWebScraper:
                 pdfurl = result_item.find_element(*locator) \
                                     .get_attribute("href")
             except NoSuchElementException:
-                continue
+                logging.info(f"We can't find a URL "
+                             f" for {title}")
+                pdfurl = None
 
             article = Article(title=title, pages=pages,
                               pdfurl=pdfurl, is_toc=is_toc)

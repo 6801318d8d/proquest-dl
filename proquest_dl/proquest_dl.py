@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import typing
+import json
 import jsonpickle
 from decimal import Decimal
 from pathlib import Path
@@ -186,9 +187,13 @@ def economist_rename_toc(issue, tocdir, outdir):
         return
     logging.info("Economist renaming TOC")
     tocpdf = tocdir / ("pages_toc.pdf")
+    if not tocpdf.is_file():
+        logging.info("Skipping renaming TOC because there is no TOC")
+        return
     tocpdf2 = tocdir / ("pages_toc_2.pdf")
     # Remove last page with copyright notice
     remove_last_page(tocpdf, tocpdf2)
+    assert tocpdf2.is_file()
     del tocpdf
     # Get first page of TOC from PDF file
     page_start = get_text_from_top_right_corner(
@@ -434,9 +439,10 @@ def main():
         assert journal_issue is None
 
     # Directories variables
-    if args.tmpdir:
+    args.tmpdir = Path(args.tmpdir)
+    if args.tmpdir.is_dir() and not args.continue_download:
         raise Exception("Error: temporary directory already exists. "
-                        "Did you forget --continue?")
+                        "Did you forget --continue-download?")
     downloaddir = args.tmpdir / "download"
     artdir1 = downloaddir / "1_articles"
     artdir2 = downloaddir / "2_articles"
@@ -478,40 +484,54 @@ def main():
     time.sleep(2)
 
     # %%
-    # Get publication name
-    issue = Issue()
-    issue.publication_id = args.publication_id
-    issue.publication_name = scraper.get_publication_name()
-    logging.info(f"publication_name='{issue.publication_name}'")
-
-    # %%
-    # Select issue to download
-    if not journal_latest:
-        scraper.select_issue(
-            journal_year,
-            journal_month,
-            journal_issue,
-        )
-
-    # %%
-    # Get number of articles to download
-    count = scraper.get_art_count()
-    logging.info(f"Number of articles to download: {count}")
-
-    # %%
-    # Get date in which the issue was released
-    issue.date = scraper.get_issue_date()
-    logging.info(f"Issue date of publication: {issue.date}")
-
-    # %%
-    # Download list of articles
-    scraper.retrieve_articles_list(issue)
-
-    # %%
     # Save issue to file
     fp = args.tmpdir/"issue.json"
-    with open(fp, "w"):
-        jsonpickle.dump(issue, fp)
+    if fp.is_file():
+        # Read issue from file
+        logging.info("Reading issue from file")
+        with open(fp, "r") as fh:
+            issue = jsonpickle.decode(fh.read())
+    else:
+        # Build issue from scratch
+        logging.info("Building issue from scratch")
+        issue = Issue()
+
+        # Get publication name
+        issue.publication_id = args.publication_id
+        issue.publication_name = scraper.get_publication_name()
+        logging.info(f"publication_name='{issue.publication_name}'")
+
+        # Select issue to download
+        if not journal_latest:
+            scraper.select_issue(
+                journal_year,
+                journal_month,
+                journal_issue,
+            )
+
+        # Get number of articles to download
+        count = scraper.get_art_count()
+        logging.info(f"Number of articles to download: {count}")
+
+        # Get date in which the issue was released
+        issue.date = scraper.get_issue_date()
+        logging.info(f"Issue date of publication: {issue.date}")
+
+        # Download list of articles
+        scraper.retrieve_articles_list(issue)
+
+        # Save issue to JSON file
+        # in case we will resume an interrupted download
+        with open(fp, "w") as fh:
+            encoded = jsonpickle.encode(issue)
+            decoded = json.loads(encoded)
+            encoded = json.dumps(
+                decoded,
+                indent=4,
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+            fh.write(encoded)
 
     # %%
     # Build output PDF file path
@@ -521,7 +541,7 @@ def main():
     assert not pdf_fp.is_file()
 
     # %%
-    # Downloads single articles
+    # Download single articles
     scraper.download_articles(issue, sleep_time)
 
     # %%
@@ -540,6 +560,7 @@ def main():
 
     # %%
     # Get size of a PDF page
+    logging.info("Getting size of a PDF page")
     fn = next(artdir3.iterdir())
     logging.info(f"Using fn='{fn}'")
     issue.page_size = get_page_size(fn)
