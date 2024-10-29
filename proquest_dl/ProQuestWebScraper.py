@@ -107,9 +107,19 @@ class ProQuestWebScraper:
 
     # Specific
 
+    def get_section(self):
+        try:
+            locator = (By.XPATH, '//div[contains(text(),"Section")]')
+            el = self.browser.find_element(*locator)
+        except NoSuchElementException:
+            return None
+        locator = (By.XPATH, 'following-sibling::*[1]')
+        el2 = el.find_element(*locator)
+        return el2.text.strip()
+
     def get_issue_date(self):
-        issue_date_select = self.browser.find_element(
-            By.CSS_SELECTOR, "select#issueSelected")
+        locator = (By.CSS_SELECTOR, "select#issueSelected")
+        issue_date_select = self.browser.find_element(*locator)
         issue_date_select = Select(issue_date_select)
         issue_date = issue_date_select.first_selected_option.text.strip()
         if self.publication_id == known_publication_ids["The Economist"]:
@@ -169,6 +179,21 @@ class ProQuestWebScraper:
             return
 
         logging.info(f"Downloading pages {article.pages}")
+
+        # Browse to article details
+        while True:
+            self.browser.get(article.detailsurl)
+            if self.check_captcha():
+                continue
+            else:
+                break
+
+        # Sleep to prevent captcha
+        time.sleep(random.uniform(*sleep_time))
+
+        # Get section
+        section = self.get_section()
+        logging.info(f"Section={section}")
 
         # Browse to article URL
         while True:
@@ -242,19 +267,38 @@ class ProQuestWebScraper:
                     msg += f"loc={loc}"
                     raise Exception(msg)
 
+            # Extract URL of abstract/details page
+            try:
+                # Locator for "Abstract/Details"
+                locator = (By.CSS_SELECTOR,
+                           "a.addFlashPageParameterformat_abstract")
+                detailsurl = result_item.find_element(*locator) \
+                    .get_attribute("href")
+            except NoSuchElementException:
+                try:
+                    # Locator for "Details"
+                    locator = (By.CSS_SELECTOR,
+                               "a.addFlashPageParameterformat_citation")
+                    detailsurl = result_item.find_element(*locator) \
+                        .get_attribute("href")
+                except NoSuchElementException:
+                    logging.info(f"We can't find details URL "
+                                 f" for {title}")
+                    detailsurl = None
+
             # Extract URL of PDF files
-            # if we don't have a PDF file, skip it
             try:
                 locator = (By.CSS_SELECTOR, "a.format_pdf")
                 pdfurl = result_item.find_element(*locator) \
                                     .get_attribute("href")
             except NoSuchElementException:
-                logging.info(f"We can't find a URL "
+                logging.info(f"We can't find PDF URL "
                              f" for {title}")
                 pdfurl = None
 
             article = Article(title=title, pages=pages,
-                              pdfurl=pdfurl, is_toc=is_toc)
+                              pdfurl=pdfurl, detailsurl=detailsurl,
+                              is_toc=is_toc)
             issue.articles.append(article)
 
     def get_art_count(self):
@@ -365,6 +409,7 @@ class ProQuestWebScraper:
         time.sleep(5)
 
     def click_view_issue_btn(self):
+        # Click "Show issue contents" button
         view_issue_css = "input[value='Show issue contents']"
         view_issue = self.wait_element_to_be_clickable_css(
             view_issue_css,
