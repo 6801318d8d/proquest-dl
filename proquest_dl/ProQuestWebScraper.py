@@ -27,11 +27,12 @@ known_publication_ids = {
 
 class ProQuestWebScraper:
 
-    def __init__(self, publication_id, artdir1, tocdir):
+    def __init__(self, publication_id, artdir1, tocdir, sleep_time=(5,10)):
         self.publication_id = publication_id
         self.artdir1 = artdir1
         self.tocdir = tocdir
         self.downloaded_pages = set()
+        self.sleep_time = sleep_time
 
     # Generic
 
@@ -136,7 +137,17 @@ class ProQuestWebScraper:
                 "We miss logic for issue date for this publication :(")
         return issue_date
 
-    def download_article(self, sleep_time, article):
+    def go_to_page(self, url):
+        while True:
+            self.browser.get(url)
+            if self.check_captcha():
+                continue
+            else:
+                break
+        # Sleep to prevent captcha
+        time.sleep(random.uniform(*self.sleep_time))
+
+    def download_article(self, article):
 
         # Check whether we already have all the pages of this article
         if article.is_toc:
@@ -181,27 +192,14 @@ class ProQuestWebScraper:
         logging.info(f"Downloading pages {article.pages}")
 
         # Browse to article details
-        while True:
-            self.browser.get(article.detailsurl)
-            if self.check_captcha():
-                continue
-            else:
-                break
-
-        # Sleep to prevent captcha
-        time.sleep(random.uniform(*sleep_time))
+        self.go_to_page(article.detailsurl)
 
         # Get section
         section = self.get_section()
         logging.info(f"Section={section}")
 
         # Browse to article URL
-        while True:
-            self.browser.get(article.pdfurl)
-            if self.check_captcha():
-                continue
-            else:
-                break
+        self.go_to_page(article.pdfurl)
 
         # Get URL of the PDF file
         css = "embed#embedded-pdf"
@@ -212,9 +210,6 @@ class ProQuestWebScraper:
         data = requests.get(pdf_file_url).content
         with open(pdffn, "wb") as fh:
             fh.write(data)
-
-        # Sleep to prevent captcha
-        time.sleep(random.uniform(*sleep_time))
 
     def download_articles(self, issue, sleep_time):
         for article in tqdm(issue.articles):
