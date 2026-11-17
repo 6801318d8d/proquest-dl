@@ -21,7 +21,7 @@ import os
 import re
 import sys
 
-from PyPDF2 import PdfMerger, PdfReader
+from pypdf import PdfReader, PdfWriter
 
 __version__ = "0.6.0"
 __author__ = "RussellLuo"
@@ -42,19 +42,19 @@ def add_bookmarks(pdf_in_filename, bookmarks_tree, pdf_out_filename=None):
     """
     pdf_in = PdfReader(pdf_in_filename)
 
-    # merge `pdf_in` into `pdf_out`, using PyPDF2.PdfMerger()
-    pdf_out = PdfMerger()
+    # copy `pdf_in` into `pdf_out` (pypdf's PdfWriter replaces PyPDF2's PdfMerger)
+    pdf_out = PdfWriter()
     pdf_out.append(pdf_in, import_outline=False)
 
     # copy/preserve existing document info
     doc_info = pdf_in.metadata
     if doc_info:
-        pdf_out.addMetadata(doc_info)
+        pdf_out.add_metadata(doc_info)
 
     def crawl_tree(tree, parent):
         for title, page_num, subtree in tree:
             current = pdf_out.add_outline_item(
-                title, page_num, parent
+                title=title, page_number=page_num, parent=parent
             )  # add parent bookmark
             if subtree:
                 crawl_tree(subtree, current)
@@ -157,6 +157,7 @@ def run_script(pdf_in_filename, bookmarks_filename, pdf_out_filename=None):
         )
     except Exception as exc:
         sys.stderr.write("error:\n%s\n" % str(exc))
+        raise
     else:
         sys.stderr.write("New PDF generated: %s\n" % pdf_out_filename)
 

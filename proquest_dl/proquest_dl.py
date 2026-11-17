@@ -3,40 +3,40 @@
 # %%
 # Imports
 import argparse
+import datetime
+import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
-import time
 import typing
-import json
-import jsonpickle
 from decimal import Decimal
 from pathlib import Path
 
+import jsonpickle
 import requests
 from borb.pdf import PDF, Document, Image, MultiColumnLayout, Page, PageLayout
-from borb.pdf.canvas.geometry.rectangle import Rectangle
-from borb.toolkit import LocationFilter, SimpleTextExtraction
-from natsort import natsorted
 
 from proquest_dl.Issue import Issue
-from proquest_dl.ProQuestWebScraper import ProQuestWebScraper
+from proquest_dl.ProQuestWebScraper import (ProQuestWebScraper,
+                                            known_publication_ids)
+from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pdfs,
+                              generate_toc, get_page_size, insert_bookmarks,
+                              insert_white_pages_in_issue, merge_pdf,
+                              remove_cropbox_from_articles,
+                              remove_last_page_from_articles)
 
 # %%
 # # Config
-# Publication ID of "The Economist"
-known_publication_ids = {"The Economist": "41716",
-                         "MIT Technology Review": "35850"}
-
 
 # only needed for "MIT Technology Review"
-journal_cover_url = (
+mit_cover_url = (
     "https://wp.technologyreview.com/"
     "wp-content/uploads/2023/08/SO23-front_cover2.png"
 )
 
-sleep_time = (5, 10)
+default_firefox_profile = Path.home() / ".proquest-dl" / "firefox-profile"
 
 # %%
 
@@ -64,9 +64,61 @@ class FullPageLayout(MultiColumnLayout):
         )
 
 
+def add_cover(cover_url, downloaddir, pagesdir, page_size):
+    """Download the cover and put it as page 1 (ProQuest has no covers)."""
+    response = requests.get(cover_url, timeout=60)
+    content_type = response.headers.get("Content-Type", "")
+    if response.status_code != 200 or not content_type.startswith("image/"):
+        logging.warning(f"No cover at {cover_url} (HTTP {response.status_code}, "
+                        f"{content_type}): page 1 stays as it is")
+        return
+    ext = cover_url.split(".")[-1]
+    coverfp = downloaddir / ("cover." + ext)
+    logging.info(f"coverfp={coverfp}")
+    coverfp.write_bytes(response.content)
+    # Remove the white page we have instead of the cover
+    page1fn = pagesdir / "pages_1.pdf"
+    if page1fn.is_file():
+        page1fn.unlink()
+    # Resize cover page image
+    coverfp2 = coverfp.parent / \
+        (coverfp.stem + "_resized" + coverfp.suffix)
+    magick_page_size = str(page_size[0]) + "x" + str(page_size[1]) + "!"
+    cmd = ["magick", str(coverfp), "-resize", magick_page_size, str(coverfp2)]
+    logging.info(f"Command to resize cover page: '{cmd}'")
+    subprocess.run(cmd, check=True)
+    # Convert cover page form image to PDF
+    doc: Document = Document()
+    page: Page = Page(width=page_size[0], height=page_size[1])
+    layout: PageLayout = FullPageLayout(page)
+    # Reduce image size a little bit to avoid borb
+    # throwing out an exception due to not having
+    # enough space on the page
+    width = int(float(page_size[0])*0.95)
+    height = int(float(page_size[1])*0.95)
+    layout.add(Image(coverfp, width=width, height=height))
+    doc.add_page(page)
+    with open(page1fn, "wb") as pdf_file_handle:
+        PDF.dumps(pdf_file_handle, doc)
 
 
-def main():
+def compress_pdf(infp, outfp):
+    """Same as 'ps2pdf -dPDFSETTINGS=/ebook', calling Ghostscript directly."""
+    gs = shutil.which("gswin64c") or shutil.which("gswin32c") or shutil.which("gs")
+    if gs is None:
+        raise Exception("Ghostscript not found in PATH")
+    cmd = [gs, "-q", "-dSAFER", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite",
+           "-dCompatibilityLevel=1.4", "-dPDFSETTINGS=/ebook",
+           f"-sOutputFile={outfp}", str(infp)]
+    subprocess.run(cmd, check=True)
+
+
+def main(argv=None, publication_id=None, prog="proquest-dl"):
+    """Command line entry point.
+
+    publication_id: set by wrappers for a single publication
+    (see economist_dl.py); the command then has no publication_id argument.
+    """
 
     logging.basicConfig(
         force=True,
@@ -74,6 +126,8 @@ def main():
         format=("[%(asctime)s] [%(filename)s:%(funcName)s] "
                 "[%(levelname)s] %(message)s")
     )
+    # No usage statistics from Selenium Manager
+    os.environ.setdefault("SE_AVOID_STATS", "true")
 
     # %%
     logging.info("Start")
@@ -82,14 +136,15 @@ def main():
     # %%
     # argparse
     parser = argparse.ArgumentParser(
-        prog='proquest-dl',
+        prog=prog,
         description='Download journal issues from ProQuest',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('publication_id',
-                        action='store',
-                        help="The ID of the publication on ProQuest. "
-                        "For example, 41716 for The Economist or "
-                        "35850 for MIT Technology Review")
+    if publication_id is None:
+        parser.add_argument('publication_id',
+                            action='store',
+                            help="The ID of the publication on ProQuest. "
+                            "For example, 41716 for The Economist or "
+                            "35850 for MIT Technology Review")
     parser.add_argument('--tmpdir',
                         action='store',
                         help="Path to temporary directory",
@@ -107,17 +162,35 @@ def main():
                         action='store_true',
                         help="Continue an already started download",
                         default=False)
+    parser.add_argument('--issue-date',
+                        type=datetime.date.fromisoformat,
+                        metavar="YYYY-MM-DD",
+                        help=("Date of the issue to download, as ProQuest "
+                              "shows it (for The Economist, the Saturday "
+                              "on the cover). Default: the latest issue."),
+                        default=None)
     parser.add_argument('--publication-date',
                         nargs=3,
                         type=int,
                         metavar=("YEAR", "MONTH", "ISSUE"),
-                        help=("Date of the publication to download. "
-                              "If everything is None, it will download "
-                              "the latest issue."),
+                        help=("Date of the publication to download, with "
+                              "ISSUE the position of the issue in the month "
+                              "(0 = the most recent). If everything is None, "
+                              "it will download the latest issue."),
                         action='store', default=[None, None, None])
+    parser.add_argument('--pause',
+                        nargs=2,
+                        type=float,
+                        metavar=("MIN", "MAX"),
+                        help=("Random pause, in seconds, after each page "
+                              "load. It doubles every time ProQuest shows "
+                              "a captcha."),
+                        default=[2, 5])
     parser.add_argument('--exclude-section',
                         metavar=("SECTION"),
-                        help=("Sections to exclude. Defaults to 'Special report'. Call it morethan one time to exclude more than one section."),
+                        help=("Section to exclude (e.g. 'Special report'). "
+                              "Repeat it to exclude more than one section. "
+                              "It costs one more page load per article."),
                         action='append',
                         default=None)
     parser.add_argument('--browser-app',
@@ -126,17 +199,20 @@ def main():
                         default="firefox")
     parser.add_argument('--geckodriver-path',
                         action='store',
-                        help="Path to geckodriver",
-                        default="/usr/bin/geckodriver")
+                        help=("Path to geckodriver "
+                              "(default: found by Selenium)"),
+                        default=None)
     parser.add_argument('--firefox-profile-path',
                         action='store',
-                        help="Path to Firefox profile",
-                        default=None)
-    args = parser.parse_args()
+                        help=("Firefox profile, used in place so that the "
+                              "ProQuest login is kept between runs. "
+                              "No other Firefox may be using it."),
+                        default=str(default_firefox_profile))
+    args = parser.parse_args(argv)
+    if publication_id is not None:
+        args.publication_id = publication_id
 
-    args.exclude_section = args.exclude_section \
-        if args.exclude_section is not None \
-        else ["Special report"]
+    args.exclude_section = args.exclude_section or []
 
     # Make variables
     proquest_url = f"https://www.proquest.com/publication/{
@@ -148,6 +224,11 @@ def main():
     # Most recent issue has index 0
     # Increasing the issue leads to less recent issues
     journal_issue = args.publication_date[2]
+    if args.issue_date is not None:
+        if journal_year is not None:
+            parser.error("give either --issue-date or --publication-date")
+        journal_year = args.issue_date.year
+        journal_month = args.issue_date.month
     journal_latest = (journal_year is None) and \
         (journal_month is None) and \
         (journal_issue is None)
@@ -157,12 +238,9 @@ def main():
         assert journal_year <= 2999
         assert journal_month >= 1
         assert journal_month <= 12
-        assert journal_issue >= 0
-        assert journal_issue <= 4
-    else:
-        assert journal_year is None
-        assert journal_month is None
-        assert journal_issue is None
+        if args.issue_date is None:
+            assert journal_issue >= 0
+            assert journal_issue <= 4
 
     # Directories variables
     args.tmpdir = Path(args.tmpdir)
@@ -181,9 +259,11 @@ def main():
         shutil.rmtree(downloaddir)
     downloaddir.mkdir(parents=True, exist_ok=args.continue_download)
     artdir1.mkdir(parents=True, exist_ok=args.continue_download)
-    artdir2.mkdir(parents=True, exist_ok=args.continue_download)
-    artdir3.mkdir(parents=True, exist_ok=args.continue_download)
-    pagesdir.mkdir(parents=True, exist_ok=args.continue_download)
+    # The later steps are fast and rerun from the downloaded files
+    for d in (artdir2, artdir3, pagesdir):
+        if d.is_dir():
+            shutil.rmtree(d)
+        d.mkdir(parents=True)
     tocdir.mkdir(parents=True, exist_ok=args.continue_download)
 
     # %%
@@ -191,88 +271,89 @@ def main():
     scraper = ProQuestWebScraper(
         publication_id=args.publication_id,
         artdir1=artdir1,
-        tocdir=tocdir
+        tocdir=tocdir,
+        sleep_time=args.pause,
+        exclude_sections=args.exclude_section,
     )
     scraper.get_browser(browser_app=args.browser_app,
                         headless_browser=args.headless,
                         firefox_profile_path=args.firefox_profile_path,
                         geckodriver_path=args.geckodriver_path
                         )
+    try:
+        # %%
+        # Connect to ProQuest website
+        logging.info(f"Connecting to ProQuest URL={proquest_url}")
+        scraper.browser.get(proquest_url)
+        scraper.wait_for_issue_page(proquest_url)
 
-    # %%
-    # Connect to ProQuest website
-    logging.info(f"Connecting to ProQuest URL={proquest_url}")
-    scraper.browser.get(proquest_url)
-    input("Login then press Enter to continue...")
-    # time.sleep(10)
-    first_window = scraper.browser.window_handles[0]
-    scraper.browser.switch_to.window(first_window)
-    time.sleep(2)
+        # %%
+        # Save issue to file
+        fp = args.tmpdir/"issue.json"
+        if fp.is_file():
+            # Read issue from file
+            logging.info("Reading issue from file")
+            with open(fp, "r", encoding="utf-8") as fh:
+                issue = jsonpickle.decode(fh.read())
+        else:
+            # Build issue from scratch
+            logging.info("Building issue from scratch")
+            issue = Issue()
 
-    # %%
-    # Save issue to file
-    fp = args.tmpdir/"issue.json"
-    if fp.is_file():
-        # Read issue from file
-        logging.info("Reading issue from file")
-        with open(fp, "r") as fh:
-            issue = jsonpickle.decode(fh.read())
-    else:
-        # Build issue from scratch
-        logging.info("Building issue from scratch")
-        issue = Issue()
+            # Get publication name
+            issue.publication_id = args.publication_id
+            issue.publication_name = scraper.get_publication_name()
+            logging.info(f"publication_name='{issue.publication_name}'")
 
-        # Get publication name
-        issue.publication_id = args.publication_id
-        issue.publication_name = scraper.get_publication_name()
-        logging.info(f"publication_name='{issue.publication_name}'")
+            # Select issue to download
+            if not journal_latest:
+                scraper.select_issue(
+                    journal_year,
+                    journal_month,
+                    journal_issue,
+                    issue_date=args.issue_date,
+                )
 
-        # Select issue to download
-        if not journal_latest:
-            scraper.select_issue(
-                journal_year,
-                journal_month,
-                journal_issue,
-            )
+            # Get number of articles to download
+            count = scraper.get_art_count()
+            logging.info(f"Number of articles to download: {count}")
 
-        # Get number of articles to download
-        count = scraper.get_art_count()
-        logging.info(f"Number of articles to download: {count}")
+            # Get date in which the issue was released
+            issue.date = scraper.get_issue_date()
+            logging.info(f"Issue date of publication: {issue.date}")
+            if args.issue_date is not None:
+                assert issue.date == args.issue_date, issue.date
 
-        # Get date in which the issue was released
-        issue.date = scraper.get_issue_date()
-        logging.info(f"Issue date of publication: {issue.date}")
+            # Download list of articles
+            scraper.retrieve_articles_list(issue)
 
-        # Download list of articles
-        scraper.retrieve_articles_list(issue)
+            # Save issue to JSON file
+            # in case we will resume an interrupted download
+            with open(fp, "w", encoding="utf-8") as fh:
+                encoded = jsonpickle.encode(issue)
+                decoded = json.loads(encoded)
+                encoded = json.dumps(
+                    decoded,
+                    indent=4,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                fh.write(encoded)
 
-        # Save issue to JSON file
-        # in case we will resume an interrupted download
-        with open(fp, "w") as fh:
-            encoded = jsonpickle.encode(issue)
-            decoded = json.loads(encoded)
-            encoded = json.dumps(
-                decoded,
-                indent=4,
-                sort_keys=True,
-                ensure_ascii=False,
-            )
-            fh.write(encoded)
+        # %%
+        # Build output PDF file path
+        args.outdir = Path(args.outdir)
+        pdf_fp = args.outdir/issue.build_final_fp()
+        logging.info(f"Output file: {pdf_fp}")
+        assert not pdf_fp.is_file()
 
-    # %%
-    # Build output PDF file path
-    args.outdir = Path(args.outdir)
-    pdf_fp = args.outdir/issue.build_final_fp()
-    logging.info(f"Output file: {pdf_fp}")
-    assert not pdf_fp.is_file()
-
-    # %%
-    # Download single articles
-    scraper.download_articles(issue, sleep_time)
-
-    # %%
-    # Close web browser
-    scraper.browser.close()
+        # %%
+        # Download single articles
+        scraper.download_articles(issue)
+    finally:
+        # %%
+        # Close web browser (quit also stops geckodriver)
+        scraper.browser.quit()
 
     # %%
     # Remove last page with copyright notice
@@ -323,59 +404,18 @@ def main():
     # %%
     # Download cover
     logging.info("Downloading cover")
+    cover_url = None
     if args.publication_id == known_publication_ids["The Economist"]:
         # Build URL for The Economist's cover
         ts = issue.date.strftime("%Y%m%d")
-        journal_cover_url = (
+        cover_url = (
             f"https://www.economist.com/img/b/1280/1684/90"
             f"/media-assets/image/{ts}_DE_EU.jpg"
         )
-    if journal_cover_url:
-        # Download cover from web
-        data = requests.get(journal_cover_url).content
-        ext = journal_cover_url.split(".")[-1]
-        logging.info(f"ext={ext}")
-        coverfp = downloaddir / ("cover." + ext)
-        logging.info(f"coverfp={coverfp}")
-        with open(coverfp, "wb") as fh:
-            fh.write(data)
-        # Remove the white page we have instead of the cover
-        page1fn = pagesdir / "pages_1.pdf"
-        if page1fn.is_file():
-            page1fn.unlink()
-        # Resize cover page image
-        coverfp2 = coverfp.parent / \
-            (coverfp.stem + "_resized" + coverfp.suffix)
-        magick_page_size = str(
-            issue.page_size[0]) + "x" + str(issue.page_size[1]) + "!"
-        cmd = [
-            "magick",
-            str(coverfp),
-            "-resize",
-            magick_page_size,
-            str(coverfp2),
-        ]
-        logging.info(f"Command to resize cover page: '{cmd}'")
-        ret = subprocess.run(cmd)
-        assert ret.returncode == 0
-        # Convert cover page form image to PDF
-        doc: Document = Document()
-        page: Page = Page(width=issue.page_size[0], height=issue.page_size[1])
-        layout: PageLayout = FullPageLayout(page)
-        # Reduce image size a little bit to avoid borb
-        # throwing out an exception due to not having
-        # enough space on the page
-        width = int(float(issue.page_size[0])*0.95)
-        height = int(float(issue.page_size[1])*0.95)
-        layout.add(
-            Image(
-                coverfp,
-                width=width,
-                height=height,
-            ))
-        doc.add_page(page)
-        with open(page1fn, "wb") as pdf_file_handle:
-            PDF.dumps(pdf_file_handle, doc)
+    elif args.publication_id == known_publication_ids["MIT Technology Review"]:
+        cover_url = mit_cover_url
+    if cover_url:
+        add_cover(cover_url, downloaddir, pagesdir, issue.page_size)
 
     # %%
     # Merge pages into final PDF file
@@ -395,18 +435,17 @@ def main():
     logging.info("Compressing PDF")
     infp = outfp
     outfp = downloaddir / "output_bookmarked_compressed.pdf"
-    cmd = ["ps2pdf", "-dPDFSETTINGS=/ebook", str(infp), str(outfp)]
-    ret = subprocess.run(cmd)
-    assert ret.returncode == 0
+    compress_pdf(infp, outfp)
 
     # %%
     # Move PDF to "final" subfolder
     logging.info("Moving PDF into final destination")
+    args.outdir.mkdir(parents=True, exist_ok=True)
     shutil.move(outfp, pdf_fp)
     shutil.rmtree(args.tmpdir)
 
     # %%
-    logging.info("Ended")
+    logging.info(f"Ended: {pdf_fp}")
 
 
 if __name__ == "__main__":

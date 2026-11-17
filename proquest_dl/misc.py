@@ -1,13 +1,25 @@
 # Functions
 
-import subprocess
-from natsort import natsorted
 import itertools
-import re
-import pdfbookmarker
 import logging
+import re
 import shutil
-import pandas as pd
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
+
+from natsort import natsorted
+from pypdf import PdfReader
+
+from proquest_dl import pdfbookmarker
+from proquest_dl.ProQuestWebScraper import known_publication_ids
+
+
+def run_in_parallel(func, jobs):
+    """Run func(*job) for every job, several at a time (each job runs one qpdf process)."""
+    with ThreadPoolExecutor() as ex:
+        list(ex.map(lambda job: func(*job), jobs))
+
 
 def insert_bookmarks(downloaddir, issue, infn, outfn):
     # Save bookmark into txt file
@@ -17,18 +29,18 @@ def insert_bookmarks(downloaddir, issue, infn, outfn):
             continue
         txt += '+"' + article.title + '"|' + str(article.pages[0]) + "\n"
     bookmarkfn = downloaddir / "bookmark.txt"
-    with open(bookmarkfn, "w") as fh:
+    with open(bookmarkfn, "w", encoding="utf-8") as fh:
         fh.write(txt)
     # Put bookmark into PDF
     pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
+
 
 def merge_pdf(indir, outfp):
     cmd = ["qpdf", "--empty", "--pages"]
     cmd += [str(x) for x in natsorted(indir.iterdir())]
     cmd += ["--", str(outfp)]
-    # logging.info(f"Command to merge pages: '{cmd}'")
-    ret = subprocess.run(cmd)
-    assert ret.returncode == 0
+    subprocess.run(cmd, check=True)
+
 
 def insert_white_pages_in_issue(indir, outdir, whitepdffp):
     pages_we_have = [str(x) for x in indir.iterdir()]
@@ -42,30 +54,22 @@ def insert_white_pages_in_issue(indir, outdir, whitepdffp):
             filename = "pages_" + str(i) + ".pdf"
             shutil.copy(whitepdffp, outdir / filename)
 
+
+def extract_page(pagesfn, pagenr, outfn):
+    cmd = ["qpdf", "--empty", "--pages", str(pagesfn), str(pagenr), "--", str(outfn)]
+    subprocess.run(cmd, check=True)
+
+
 def extract_single_pages_from_pdfs(indir, outdir):
-    pagesfns = natsorted(list(indir.iterdir()))
-    for pagesfn in pagesfns:
-        # logging.debug(f"pagesfn={pagesfn.stem}")
+    # When two files contain the same page, the later file (in natural order) wins
+    jobs = {}
+    for pagesfn in natsorted(list(indir.iterdir())):
         pages = sorted(get_pages_from_file(pagesfn))
-        # logging.debug(f"pages={pages}")
         for this_page_i, this_page in enumerate(pages):
-            # Extract a single page
             outfn = outdir / ("pages_" + str(this_page) + ".pdf")
-            pagenr = str(this_page_i + 1)
-            logging.debug(
-                f"Extracting from {pagesfn.name} "
-                f"page nr. {pagenr} into {outfn.name}")
-            cmd = [
-                "qpdf",
-                "--empty",
-                "--pages",
-                str(pagesfn),
-                str(pagenr),
-                "--",
-                outfn,
-            ]
-            ret = subprocess.run(cmd)
-            assert ret.returncode == 0
+            jobs[outfn] = (pagesfn, this_page_i + 1, outfn)
+    run_in_parallel(extract_page, jobs.values())
+
 
 def generate_toc(issue, tocdir, outdir):
     """
@@ -76,13 +80,12 @@ def generate_toc(issue, tocdir, outdir):
     logging.info("We don't have a Table Of Contents. Generating our own ...")
     tocmdfile = tocdir / "toc.md"
     tocpdffile = tocmdfile.parent / (tocmdfile.stem + ".pdf")
-    fh = open(tocmdfile, "w", encoding="utf8")
-    fh.write("# Table of Contents\n\n")
-    all_titles = [article.title for article in issue.articles]
-    all_pages = [article.pages for article in issue.articles]
-    df = pd.DataFrame({"Title": all_titles, "Page": all_pages})
-    fh.write(df.to_markdown(index=False))
-    fh.close()
+    lines = ["# Table of Contents", "", "| Title | Page |", "|---|---|"]
+    for article in issue.articles:
+        title = article.title.replace("|", "/")
+        pages = ", ".join(str(x) for x in (article.pages or []))
+        lines.append(f"| {title} | {pages} |")
+    tocmdfile.write_text("\n".join(lines) + "\n", encoding="utf8")
     cmd = [
         "pandoc",
         "-f",
@@ -91,9 +94,9 @@ def generate_toc(issue, tocdir, outdir):
         "pdf",
         "-V",
         "geometry:papersize={"
-        + issue.page_size[0]
+        + str(issue.page_size[0])
         + "pt, "
-        + issue.page_size[1]
+        + str(issue.page_size[1])
         + "pt}",
         str(tocmdfile),
         "-o",
@@ -101,9 +104,8 @@ def generate_toc(issue, tocdir, outdir):
     ]
     logging.info(
         f"Command to convert self-generated TOC from Markdown to PDF: '{cmd}'")
-    ret = subprocess.run(cmd)
-    assert ret.returncode == 0
-    shutil.move(tocpdffile, outdir / "pages_2-3.pdf")
+    subprocess.run(cmd, check=True)
+    shutil.move(tocpdffile, outdir / "pages_2,3.pdf")
 
 
 # %%
@@ -144,137 +146,79 @@ def economist_rename_toc(issue, tocdir, outdir):
     shutil.copy(tocpdf2, pdffn)
 
 
+# borb 2.1 cannot read PDF files back (it fails even on its own output),
+# so the reading functions use pypdf; borb only writes the blank and cover pages.
+
 # %%
 def get_page_size(fp):
-    doc: typing.Optional[Document] = None
-    with open(fp, "rb") as in_file_handle:
-        doc = PDF.loads(in_file_handle)
-    # check whether we have read a Document
-    assert doc is not None
-    # get page size in "default user space units"
-    page_size = doc.get_page(0).get_page_info().get_size()
-    return page_size
+    # page size in "default user space units", as borb's Page() wants it
+    box = PdfReader(fp).pages[0].mediabox
+    return (Decimal(str(float(box.width))), Decimal(str(float(box.height))))
 
 
 # %%
 def get_number_of_pages(fp):
-    with open(fp, "rb") as in_file_handle:
-        doc = PDF.loads(in_file_handle)
-    return int(doc.get_document_info().get_number_of_pages())
+    return len(PdfReader(fp).pages)
 
 
 # %%
 def get_text_from_top_right_corner(fp, xoffset, yoffset, page_size=None):
+    """Text of the first page in the box xoffset wide and yoffset high
+    at the top right corner (where The Economist prints the page number)."""
     if not page_size:
         page_size = get_page_size(fp)
+    width, height = (float(x) for x in page_size)
+    found = []
 
-    page_size = [float(x) for x in page_size]
+    def visitor(text, cm, tm, font_dict, font_size):
+        # position of the text = text matrix times current transformation matrix
+        x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+        y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
+        if x >= width - xoffset and y >= height - yoffset and text.strip():
+            found.append(text.strip())
 
-    x = page_size[0] - xoffset
-    y = page_size[1] - yoffset
-    width = page_size[0] - x
-    height = page_size[1] - y
-
-    # define the Rectangle of interest
-    r: Rectangle = Rectangle(x, y, width, height)
-
-    # define SimpleTextExtraction
-    l0: SimpleTextExtraction = SimpleTextExtraction()
-
-    # apply a LocationFilter on top of SimpleTextExtraction
-    l1: LocationFilter = LocationFilter(r)
-    l1.add_listener(l0)
-
-    # read the Document
-    doc: typing.Optional[Document] = None
-    with open(fp, "rb") as in_file_handle:
-        doc = PDF.loads(in_file_handle, [l1])
-
-    # check whether we have read a Document
-    assert doc is not None
-
-    # print the text inside the Rectangle of interest
-    return l0.get_text()[0]
-
-
-# %%
-def remove_last_page_borb(infp, outfp):
-    doc: typing.Optional[Document] = None
-    with open(infp, "rb") as pdf_file_handle:
-        doc = PDF.loads(pdf_file_handle)
-    assert doc is not None
-    npages = int(doc.get_document_info().get_number_of_pages())
-    doc.pop_page(npages - 1)
-    with open(outfp, "wb") as pdf_file_handle:
-        PDF.dumps(pdf_file_handle, doc)
-
-
-# %%
-def remove_last_page_qpdf(infp, outfp):
-    cmd = ["qpdf", "--empty", "--pages", str(infp), "1-r2", "--", str(outfp)]
-    res = subprocess.run(cmd)
-    assert res.returncode == 0
+    PdfReader(fp).pages[0].extract_text(visitor_text=visitor)
+    return "".join(found)
 
 
 # %%
 def remove_last_page(infp, outfp):
-    remove_last_page_qpdf(infp, outfp)
+    cmd = ["qpdf", "--empty", "--pages", str(infp), "1-r2", "--", str(outfp)]
+    subprocess.run(cmd, check=True)
 
 
 # %%
 def remove_last_page_from_articles(indir, outdir):
-    for infp in indir.iterdir():
-        outfp = outdir / (infp.name)
-        remove_last_page(infp, outfp)
-
-
-# %%
-def remove_crop_box_borb(infp, outfp):
-    npages = get_number_of_pages(infp)
-    doc: typing.Optional[Document] = None
-    with open(infp, "rb") as pdf_file_handle:
-        doc = PDF.loads(pdf_file_handle)
-    assert doc is not None
-    for pagen in range(1, npages + 1):
-        page_size = doc.get_page(pagen).get_page_info().get_size()
-        cb = [Decimal(0), Decimal(0), page_size[0], page_size[1]]
-        doc["XRef"]["Trailer"]["Root"]["Pages"]["Kids"][pagen]["CropBox"] = cb
-    # store Document
-    with open(outfp, "wb") as pdf_file_handle:
-        PDF.dumps(pdf_file_handle, doc)
-
-
-# %%
-def remove_crop_box_qpdf(infp, outfp):
-    # https://stackoverflow.com/questions/6451859/rendering-the-whole-media-box-of-a-pdf-page-into-a-png-file-using-ghostscript
-    # qpdf --qdf input.pdf output.pdf
-    cmd = ["qpdf", "--qdf", str(infp), str(outfp)]
-    res = subprocess.run(cmd)
-    assert res.returncode == 0
-    cmd = ["sed", "-i.bak", "-e", "/CropBox/,/]/s#.# #g", str(outfp)]
-    res = subprocess.run(cmd)
-    assert res.returncode == 0
-    bakfp = Path(str(outfp.resolve()) + ".bak")
-    bakfp.unlink()
+    run_in_parallel(remove_last_page,
+                    [(infp, outdir / infp.name) for infp in indir.iterdir()])
 
 
 # %%
 def remove_crop_box(infp, outfp):
-    remove_crop_box_qpdf(infp, outfp)
+    # https://stackoverflow.com/questions/6451859/rendering-the-whole-media-box-of-a-pdf-page-into-a-png-file-using-ghostscript
+    # In QDF form every array element sits on its own line, so blanking the
+    # CropBox lines with spaces (as sed '/CropBox/,/]/s#.# #g' does) keeps all
+    # byte offsets valid; readers then show the whole MediaBox.
+    subprocess.run(["qpdf", "--qdf", str(infp), str(outfp)], check=True)
+    lines = outfp.read_bytes().split(b"\n")
+    inside = False
+    for i, line in enumerate(lines):
+        if inside:
+            lines[i] = b" " * len(line)
+            inside = b"]" not in line
+        elif b"CropBox" in line:
+            lines[i] = b" " * len(line)
+            inside = True
+    outfp.write_bytes(b"\n".join(lines))
 
 
 # %%
 def remove_cropbox_from_articles(indir, outdir):
-    for infp in indir.iterdir():
-        outfp = outdir / (infp.name)
-        remove_crop_box(infp, outfp)
+    run_in_parallel(remove_crop_box,
+                    [(infp, outdir / infp.name) for infp in indir.iterdir()])
 
 
 # %%
 def get_pages_from_file(pagesfn):
     this_pages = re.search(r".*?pages_(.*)\.pdf", str(pagesfn)).group(1)
     return this_pages.split(",")
-
-
-# %%
-# # Main

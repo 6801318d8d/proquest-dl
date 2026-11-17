@@ -4,3 +4,4 @@
 .python-version
 __pycache__
 /requirements_login.txt
+.venv/

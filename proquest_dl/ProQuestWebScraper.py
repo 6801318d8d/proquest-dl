@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 from selenium import webdriver
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -24,15 +27,22 @@ known_publication_ids = {
     "MIT Technology Review": "35850",
 }
 
+CAPTCHA = (By.CSS_SELECTOR, "form#verifyCaptcha")
+ISSUE_SELECT = (By.CSS_SELECTOR, "select#issueSelected")
+
 
 class ProQuestWebScraper:
 
-    def __init__(self, publication_id, artdir1, tocdir, sleep_time=(5,10)):
+    def __init__(self, publication_id, artdir1, tocdir, sleep_time=(2, 5),
+                 exclude_sections=()):
         self.publication_id = publication_id
         self.artdir1 = artdir1
         self.tocdir = tocdir
         self.downloaded_pages = set()
-        self.sleep_time = sleep_time
+        self.sleep_time = tuple(sleep_time)
+        self.exclude_sections = set(exclude_sections)
+        self.user_agent = None
+        self.downloads = []
 
     # Generic
 
@@ -71,41 +81,6 @@ class ProQuestWebScraper:
         }
         return self.wait_element_to_be_clickable(**args)
 
-    def wait_element_to_be_visible(
-        self,
-        locator,
-        timeout=5,
-        starting_element=None,
-    ):
-        assert (len(locator) == 2)
-        if not starting_element:
-            starting_element = self.browser
-        cond = EC.visibility_of_element_located(locator)
-        try:
-            el = WebDriverWait(starting_element, timeout).until(cond)
-        except TimeoutException as e:
-            msg = "Timed out waiting for element to be visible\n"
-            msg += f"locator={locator}\n"
-            msg += f"timeout={timeout}\n"
-            msg += f"starting_element={starting_element}"
-            logging.error(msg)
-            raise e
-        return el
-
-    def wait_element_to_be_visible_css(
-        self,
-        css,
-        timeout=5,
-        starting_element=None,
-    ):
-        locator = (By.CSS_SELECTOR, css)
-        args = {
-            "locator": locator,
-            "timeout": timeout,
-            "starting_element": starting_element,
-        }
-        return self.wait_element_to_be_visible(**args)
-
     # Specific
 
     def get_section(self):
@@ -118,32 +93,35 @@ class ProQuestWebScraper:
         el2 = el.find_element(*locator)
         return el2.text.strip()
 
-    def get_issue_date(self):
-        locator = (By.CSS_SELECTOR, "select#issueSelected")
-        issue_date_select = self.browser.find_element(*locator)
-        issue_date_select = Select(issue_date_select)
-        issue_date = issue_date_select.first_selected_option.text.strip()
+    def parse_issue_date(self, text):
+        """Date of an issue from its label in the issue select box."""
+        text = text.strip()
         if self.publication_id == known_publication_ids["The Economist"]:
-            issue_date = issue_date.split(";")[0].strip()
-            issue_date = datetime.datetime.strptime(
-                issue_date, "%b %d, %Y").date()
+            # e.g. "Nov 14, 2026; Vol. 457 (9473)"
+            return datetime.datetime.strptime(
+                text.split(";")[0].strip(), "%b %d, %Y").date()
         elif self.publication_id == known_publication_ids["MIT Technology Review"]:
             month = datetime.datetime.strptime(
-                issue_date[0:3], "%b").date().month
-            year = int(issue_date.split()[1][:-1])
-            issue_date = datetime.date(year=year, month=month, day=1)
+                text[0:3], "%b").date().month
+            year = int(text.split()[1][:-1])
+            return datetime.date(year=year, month=month, day=1)
         else:
             raise Exception(
                 "We miss logic for issue date for this publication :(")
-        return issue_date
+
+    def get_issue_date(self):
+        select = Select(self.browser.find_element(*ISSUE_SELECT))
+        return self.parse_issue_date(select.first_selected_option.text)
 
     def go_to_page(self, url):
         while True:
             self.browser.get(url)
-            if self.check_captcha():
-                continue
-            else:
+            if not self.check_captcha():
                 break
+            # ProQuest thinks we are too fast: slow down for the rest of the run
+            self.sleep_time = tuple(min(2 * x, 60) for x in self.sleep_time)
+            logging.warning(
+                f"Pauses between pages raised to {self.sleep_time} seconds")
         # Sleep to prevent captcha
         time.sleep(random.uniform(*self.sleep_time))
 
@@ -161,11 +139,11 @@ class ProQuestWebScraper:
             logging.info(msg)
             return
 
-        # Add to list of downloaded pages
-        # we do it now because even if we should skip the download later
-        # because we already have the PDF file, if we have the PDF file
-        # it means we already have the pages
-        self.downloaded_pages.update(page_range)
+        if not article.pdfurl:
+            msg = (f"Skipping page(s) {article.pages} "
+                   "because there is no associated PDF")
+            logging.info(msg)
+            return
 
         # Generate PDF file name
         if article.is_toc:
@@ -178,42 +156,59 @@ class ProQuestWebScraper:
 
         # Check if we have already downloaded this PDF file
         if pdffn.is_file():
+            self.downloaded_pages.update(page_range)
             msg = (f"Skipping page(s) {article.pages} "
                    "because the file was already downloaded")
             logging.info(msg)
             return
 
-        if not article.pdfurl:
-            msg = (f"Skipping page(s) {article.pages} "
-                   "because there is no associated PDF")
-            logging.info(msg)
-            return
+        # The section is only on the details page: visit it only when needed
+        if self.exclude_sections and article.detailsurl:
+            self.go_to_page(article.detailsurl)
+            section = self.get_section()
+            logging.info(f"Section={section}")
+            if section in self.exclude_sections:
+                logging.info(f"Skipping page(s) {article.pages} "
+                             f"because section '{section}' is excluded")
+                return
 
+        self.downloaded_pages.update(page_range)
         logging.info(f"Downloading pages {article.pages}")
-
-        # Browse to article details
-        self.go_to_page(article.detailsurl)
-
-        # Get section
-        section = self.get_section()
-        logging.info(f"Section={section}")
 
         # Browse to article URL
         self.go_to_page(article.pdfurl)
 
         # Get URL of the PDF file
-        css = "embed#embedded-pdf"
-        el = self.wait_element_to_be_visible_css(css, timeout=30)
+        locator = (By.CSS_SELECTOR, "embed#embedded-pdf")
+        el = WebDriverWait(self.browser, 30).until(
+            EC.presence_of_element_located(locator))
         pdf_file_url = el.get_attribute("src")
 
-        # Download PDF file to local
-        data = requests.get(pdf_file_url).content
-        with open(pdffn, "wb") as fh:
-            fh.write(data)
+        # Download the PDF file in the background while the browser goes on
+        cookies = {c["name"]: c["value"] for c in self.browser.get_cookies()}
+        self.downloads.append(self.executor.submit(
+            self.save_pdf, pdf_file_url, cookies, pdffn))
 
-    def download_articles(self, issue, sleep_time):
-        for article in tqdm(issue.articles):
-            self.download_article(sleep_time, article)
+    def save_pdf(self, url, cookies, pdffn):
+        headers = {"User-Agent": self.user_agent} if self.user_agent else {}
+        r = requests.get(url, cookies=cookies, headers=headers, timeout=120)
+        r.raise_for_status()
+        if b"%PDF" not in r.content[:1024]:
+            raise Exception(f"{pdffn.name}: the server did not send a PDF "
+                            f"(Content-Type {r.headers.get('Content-Type')})")
+        # Write under another name first: an interrupted run leaves no
+        # truncated file that --continue-download would take as complete
+        tmpfn = pdffn.with_suffix(".part")
+        tmpfn.write_bytes(r.content)
+        tmpfn.replace(pdffn)
+
+    def download_articles(self, issue):
+        self.downloads = []
+        with ThreadPoolExecutor(max_workers=4) as self.executor:
+            for article in tqdm(issue.articles, desc="Articles"):
+                self.download_article(article)
+            for future in tqdm(self.downloads, desc="PDF files"):
+                future.result()
 
     def retrieve_articles_list(self, issue):
         """
@@ -331,11 +326,17 @@ class ProQuestWebScraper:
         self.browser = None
         if browser_app == "firefox":
             options = webdriver.FirefoxOptions()
+            # get() returns once the HTML is parsed, without waiting
+            # for images, ads and trackers
+            options.page_load_strategy = "eager"
             if headless_browser:
                 options.add_argument("--headless")
             if firefox_profile_path:
-                ffprof = webdriver.FirefoxProfile(firefox_profile_path)
-                options.profile = ffprof
+                # Use the profile in place, not a temporary copy, so the
+                # ProQuest login is kept from one run to the next
+                Path(firefox_profile_path).mkdir(parents=True, exist_ok=True)
+                options.add_argument("-profile")
+                options.add_argument(str(firefox_profile_path))
             service = None
             if geckodriver_path:
                 service = webdriver.FirefoxService(
@@ -344,6 +345,7 @@ class ProQuestWebScraper:
             self.browser = webdriver.Firefox(options=options, service=service)
         elif browser_app == "chrome":
             options = webdriver.ChromeOptions()
+            options.page_load_strategy = "eager"
             if headless_browser:
                 options.add_argument("--headless")
             # executable_path param is not needed if you updated PATH
@@ -351,16 +353,44 @@ class ProQuestWebScraper:
         else:
             raise Exception(f"Unknown value for browser_app={browser_app}")
         self.browser.maximize_window()
+        self.user_agent = self.browser.execute_script(
+            "return navigator.userAgent")
 
-    def check_captcha(self):
-        try:
-            self.browser.find_element(By.CSS_SELECTOR, "form#verifyCaptcha")
-        except NoSuchElementException:
+    def check_captcha(self, timeout=1800):
+        """If ProQuest shows a captcha, wait until it is solved in the browser."""
+        if not self.browser.find_elements(*CAPTCHA):
             return False
-        input("Solve captcha and press key to continue...")
+        logging.warning("Captcha: solve it in the browser window, "
+                        "the download goes on by itself")
+        WebDriverWait(self.browser, timeout, poll_frequency=2).until_not(
+            EC.presence_of_element_located(CAPTCHA))
         return True
 
-    def select_issue(self, journal_year, journal_month, journal_issue):
+    def wait_for_issue_page(self, url, timeout=1800):
+        """Wait until the browser shows the issue page of the publication.
+
+        The first time, log in to ProQuest in the browser window; then open
+        the publication page again, in the first tab, if ProQuest does not
+        go back to it.
+        """
+        deadline = time.monotonic() + timeout
+        last_message = 0
+        while True:
+            if self.browser.find_elements(*ISSUE_SELECT):
+                return
+            self.check_captcha()
+            now = time.monotonic()
+            if now > deadline:
+                raise TimeoutException("Timed out waiting for the issue page")
+            if now - last_message > 60:
+                logging.info("Waiting for the issue page: log in to ProQuest "
+                             f"in the browser window, then open {url}")
+                last_message = now
+            time.sleep(2)
+
+    def select_issue(self, journal_year, journal_month, journal_issue=None,
+                     issue_date=None):
+        """Select an issue by its index in the month, or by its date."""
         # Select year
         logging.info(f"Selecting year: {journal_year}")
         try:
@@ -388,15 +418,27 @@ class ProQuestWebScraper:
         time.sleep(2)
 
         # Select issue
-        logging.info(f"Selecting issue: {journal_issue}")
         try:
-            select_element = self.browser.find_element(
-                By.CSS_SELECTOR,
-                "select#issueSelected")
+            select_element = self.browser.find_element(*ISSUE_SELECT)
         except NoSuchElementException:
             raise Exception("Cannot find issue select box")
         select = Select(select_element)
-        select.select_by_index(journal_issue)
+        if issue_date is None:
+            logging.info(f"Selecting issue: {journal_issue}")
+            select.select_by_index(journal_issue)
+        else:
+            logging.info(f"Selecting issue of {issue_date}")
+            labels = [option.text.strip() for option in select.options]
+            for i, label in enumerate(labels):
+                try:
+                    if self.parse_issue_date(label) == issue_date:
+                        break
+                except ValueError:
+                    continue
+            else:
+                raise Exception(f"No issue dated {issue_date}. "
+                                f"Issues of that month: {labels}")
+            select.select_by_index(i)
 
         # Click on "View Issue" button
         time.sleep(4)
