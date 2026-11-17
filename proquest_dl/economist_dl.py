@@ -2,7 +2,7 @@
 """economist-dl: download an issue of The Economist from ProQuest.
 
 The same options as proquest-dl, without the publication ID, plus
---new-issue and --keep-days for a daily scheduled run. Examples:
+--new-issue and --keep-days for a scheduled run. Examples:
 
     economist-dl                                   # the latest issue
     economist-dl --issue-date 2026-11-14           # the issue of that Saturday
@@ -26,8 +26,14 @@ ISSUE_FILE = re.compile(r"TheEconomist-(\d{4}-\d{2}-\d{2})\.pdf")
 
 
 def last_saturday(today):
-    """The date of the latest issue: the Saturday of the week (today if Saturday)."""
+    """The Saturday on or before today."""
     return today - datetime.timedelta(days=(today.weekday() - 5) % 7)
+
+
+def latest_issue(today):
+    """The date of the latest issue: issues are dated Saturday, and ProQuest
+    loads them on the Thursday (sometimes the Friday) before."""
+    return last_saturday(today + datetime.timedelta(days=2))
 
 
 def prune(outdir, keep_days, today):
@@ -43,9 +49,10 @@ def main(argv=None, today=None):
     proquest_dl.setup()
     parser = proquest_dl.build_parser(publication_id=ECONOMIST, prog="economist-dl")
     parser.add_argument('--new-issue', action='store_true',
-                        help=("Download the issue of the last Saturday, unless "
+                        help=("Download the latest issue (dated Saturday, on "
+                              "ProQuest from the Thursday before), unless "
                               "it is already in --outdir; when ProQuest does not "
-                              "have it yet, stop without an error (for a daily "
+                              "have it yet, stop without an error (for a "
                               "scheduled run)"))
     parser.add_argument('--keep-days', type=int, metavar="N", default=None,
                         help="First delete the issues in --outdir dated over N days ago")
@@ -59,7 +66,7 @@ def main(argv=None, today=None):
     if args.new_issue:
         if args.issue_date:
             parser.error("--new-issue chooses the issue date by itself")
-        args.issue_date = last_saturday(today)
+        args.issue_date = latest_issue(today)
         done = Path(args.outdir) / f"TheEconomist-{args.issue_date}.pdf"
         if done.is_file():
             logging.info(f"Already downloaded: {done}")

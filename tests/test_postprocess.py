@@ -187,6 +187,9 @@ def test_last_saturday():
     sat = datetime.date(2026, 11, 14)
     for day in range(7):  # Saturday 14 to Friday 20 November 2026
         assert economist_dl.last_saturday(sat + datetime.timedelta(days=day)) == sat
+    # the issue of Saturday 14 is on ProQuest from Thursday 12 to Wednesday 18
+    for day in range(-2, 5):
+        assert economist_dl.latest_issue(sat + datetime.timedelta(days=day)) == sat
 
 
 def test_prune_and_new_issue_already_downloaded(tmp_path):

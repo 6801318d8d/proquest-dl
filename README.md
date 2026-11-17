@@ -75,16 +75,16 @@ uv run economist-dl                          # the latest issue
 uv run economist-dl --issue-date 2026-11-14  # the issue of that Saturday
 ```
 
-For a daily scheduled run (cron, Windows Task Scheduler):
+For a scheduled run (cron, Windows Task Scheduler):
 
 ```
 uv run economist-dl --new-issue --keep-days 31 --headless --outdir DIR
 ```
 
-- `--new-issue`: download the issue of the last Saturday unless it is already in `--outdir`, without opening the browser when it is; if ProQuest does not have it yet, stop without an error, so that the next run tries again; resume an interrupted download of that issue by itself.
+- `--new-issue`: download the latest issue unless it is already in `--outdir`, without opening the browser when it is; if ProQuest does not have it yet, stop without an error, so that the next run tries again; resume an interrupted download of that issue by itself. Issues are dated Saturday and ProQuest loads them on the Thursday before (sometimes on the Friday), so from Thursday on this looks for the issue of the coming Saturday: schedule it from Thursday evening to Saturday, e.g. every 4 hours.
 - `--keep-days N`: first delete the issues in `--outdir` dated over N days ago.
 
-ProQuest asks for a captcha after about 40 PDF files in a session. With `--headless` nobody can solve it, so the run stops at once and keeps the files already downloaded; with `--new-issue` the next run resumes the download (schedule it a few times a day, e.g. every 4 hours).
+ProQuest asks for a captcha after about 40 PDF files in a session. With `--headless` nobody can solve it, so the run stops at once and keeps the files already downloaded; with `--new-issue` the next run resumes the download.
 
 ### Useful options
 
