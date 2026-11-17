@@ -6,7 +6,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import (NoSuchElementException,
+                                        TimeoutException, WebDriverException)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -402,41 +403,54 @@ class ProQuestWebScraper:
         logging.info(f"Logging in through {institution_url}")
         self.browser.get(institution_url)
         password = (By.CSS_SELECTOR, "input[type=password]")
-        WebDriverWait(self.browser, 60).until(
-            lambda b: b.find_elements(*password)
-            or back_on_proquest(b.current_url))
-        if not back_on_proquest(self.browser.current_url):
-            credentials = get_credentials()
-            if credentials is None:
-                logging.info("No credentials configured: "
-                             "log in in the browser window")
+        # ProQuest comes back to the page it was on (the publication) when
+        # the login is over; the sign-in page asks for the password unless
+        # the institution still has a session
+        sent = False
+        steady_since = None
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if self.browser.find_elements(*ISSUE_SELECT):
+                logging.info("Logged in")
                 return
-            field = self.browser.find_element(*password)
-            user = field.find_elements(
-                By.XPATH, "preceding::input[@type='text' or @type='email'][1]")
-            if user:
-                user[0].clear()
-                user[0].send_keys(credentials[0])
-            # Enter, not submit(): the form must send its button's name
-            field.send_keys(credentials[1] + Keys.RETURN)
-            # Pages after the password (e.g. the consent to release the
-            # attributes) are accepted with their "proceed" button
-            deadline = time.monotonic() + 120
-            while not back_on_proquest(self.browser.current_url):
-                if time.monotonic() > deadline:
-                    logging.warning(
-                        "The login did not get back to ProQuest "
+            fields = self.browser.find_elements(*password)
+            if fields and not sent:
+                sent = True
+                credentials = get_credentials()
+                if credentials is None:
+                    logging.info("No credentials configured: "
+                                 "log in in the browser window")
+                    return
+                user = fields[0].find_elements(
+                    By.XPATH,
+                    "preceding::input[@type='text' or @type='email'][1]")
+                if user:
+                    user[0].clear()
+                    user[0].send_keys(credentials[0])
+                # Enter, not submit(): the form must send its button's name
+                fields[0].send_keys(credentials[1] + Keys.RETURN)
+            elif not fields:
+                # Pages after the password (e.g. the consent to release
+                # the attributes) are accepted with their "proceed" button
+                proceed = self.browser.find_elements(*PROCEED)
+                if proceed:
+                    proceed[0].click()
+            # Back on another ProQuest page, loaded and still for 5 seconds:
+            # the login is over, open the publication again
+            try:
+                ready = (back_on_proquest(self.browser.current_url)
+                         and self.browser.execute_script(
+                             "return document.readyState") == "complete")
+            except WebDriverException:  # the page is changing
+                ready = False
+            steady_since = (steady_since or time.monotonic()) if ready else None
+            if steady_since and time.monotonic() - steady_since > 5:
+                self.browser.get(url)
+                return
+            time.sleep(1)
+        logging.warning("The login did not get back to ProQuest "
                         f"(the browser is at {self.browser.current_url}): "
                         "finish it in the browser window")
-                    break
-                proceed = self.browser.find_elements(*PROCEED)
-                if proceed and not self.browser.find_elements(*password):
-                    proceed[0].click()
-                time.sleep(2)
-            else:
-                logging.info("Logged in")
-        # Back to the publication, also when the login ended elsewhere
-        self.browser.get(url)
 
     def wait_for_issue_page(self, url, timeout=1800, institution_url=None,
                             get_credentials=lambda: None):
@@ -464,7 +478,9 @@ class ProQuestWebScraper:
                 raise TimeoutException("Timed out waiting for the issue page")
             if now - last_message > 60:
                 logging.info("Waiting for the issue page: log in to ProQuest "
-                             f"in the browser window, then open {url}")
+                             f"in the browser window, then open {url} "
+                             f"(the browser shows '{self.browser.title}' "
+                             f"at {self.browser.current_url})")
                 last_message = now
             time.sleep(2)
 
