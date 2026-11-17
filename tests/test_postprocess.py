@@ -11,7 +11,8 @@ from proquest_dl import proquest_dl
 from proquest_dl.Article import Article
 from proquest_dl.Issue import Issue
 from proquest_dl.ProQuestWebScraper import (ProQuestWebScraper, article_from_item,
-                                            parse_pages, pdf_link_from_html)
+                                            back_on_proquest, parse_pages,
+                                            pdf_link_from_html)
 from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pdfs,
                               get_number_of_pages, get_page_size,
                               get_text_from_top_right_corner, insert_bookmarks,
@@ -49,6 +50,16 @@ def test_pdf_link_from_html():
         "https://media.example.com/media/x?a=1&b=2"
     assert pdf_link_from_html('<a id="downloadPDFLink_1" href="/y">') == "/y"
     assert pdf_link_from_html("<form id='verifyCaptcha'></form>") is None
+
+
+def test_back_on_proquest():
+    assert back_on_proquest("https://www.proquest.com/?accountid=12345")
+    # the query string may name the login method
+    assert back_on_proquest("https://www.proquest.com/?accountid=1&type=shibboleth")
+    assert not back_on_proquest("https://www.proquest.com/shibboleth?accountid=1")
+    assert not back_on_proquest(
+        "https://shibboleth-sp.prod.proquest.com/Shibboleth.sso/SAML2/POST")
+    assert not back_on_proquest("https://idp.example.edu/idp/profile/SAML2/Redirect/SSO")
 
 
 def test_table_of_contents_with_pages():

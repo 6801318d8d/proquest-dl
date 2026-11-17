@@ -36,12 +36,15 @@ PDF_LINK = (By.CSS_SELECTOR, "a[id^=downloadPDFLink]")
 PROCEED = (By.CSS_SELECTOR, "button[name=_eventId_proceed], input[name=_eventId_proceed]")
 
 
-def back_on_proquest(browser):
-    """On a ProQuest page that is not one of the login redirects."""
-    url = browser.current_url
-    host = urlparse(url).hostname or ""
-    on_proquest = host == "proquest.com" or host.endswith(".proquest.com")
-    return on_proquest and "shibboleth" not in url.lower()
+def back_on_proquest(url):
+    """On a ProQuest page that is not one of the login redirects
+    (www.proquest.com/shibboleth..., shibboleth-sp.prod.proquest.com).
+    The query string is not looked at: it can name the login method."""
+    parts = urlparse(url)
+    host = parts.hostname or ""
+    return ((host == "proquest.com" or host.endswith(".proquest.com"))
+            and not host.startswith("shibboleth")
+            and not parts.path.lower().startswith("/shibboleth"))
 
 # One call to the browser returns the whole list of articles of the issue
 ARTICLES_JS = """
@@ -400,8 +403,9 @@ class ProQuestWebScraper:
         self.browser.get(institution_url)
         password = (By.CSS_SELECTOR, "input[type=password]")
         WebDriverWait(self.browser, 60).until(
-            lambda b: b.find_elements(*password) or back_on_proquest(b))
-        if not back_on_proquest(self.browser):
+            lambda b: b.find_elements(*password)
+            or back_on_proquest(b.current_url))
+        if not back_on_proquest(self.browser.current_url):
             credentials = get_credentials()
             if credentials is None:
                 logging.info("No credentials configured: "
@@ -418,16 +422,20 @@ class ProQuestWebScraper:
             # Pages after the password (e.g. the consent to release the
             # attributes) are accepted with their "proceed" button
             deadline = time.monotonic() + 120
-            while not back_on_proquest(self.browser):
+            while not back_on_proquest(self.browser.current_url):
                 if time.monotonic() > deadline:
-                    logging.warning("The login did not get back to ProQuest: "
-                                    "finish it in the browser window")
-                    return
+                    logging.warning(
+                        "The login did not get back to ProQuest "
+                        f"(the browser is at {self.browser.current_url}): "
+                        "finish it in the browser window")
+                    break
                 proceed = self.browser.find_elements(*PROCEED)
                 if proceed and not self.browser.find_elements(*password):
                     proceed[0].click()
                 time.sleep(2)
-        logging.info("Logged in")
+            else:
+                logging.info("Logged in")
+        # Back to the publication, also when the login ended elsewhere
         self.browser.get(url)
 
     def wait_for_issue_page(self, url, timeout=1800, institution_url=None,
