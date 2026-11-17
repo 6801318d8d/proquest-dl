@@ -218,3 +218,34 @@ def test_economist_issue_date():
     scraper = ProQuestWebScraper("41716", None, None)
     assert scraper.parse_issue_date(" Nov 14, 2026; Vol. 457 (9473) ") \
         == datetime.date(2026, 11, 14)
+
+
+def test_issue_date_of_other_publications():
+    scraper = ProQuestWebScraper("9197", None, None)  # NYT Book Review
+    assert scraper.parse_issue_date("Nov 15, 2026") == datetime.date(2026, 11, 15)
+    # monthly: the first day of the (first) month
+    assert scraper.parse_issue_date(" Nov/Dec 2026; Vol. 129 (6) ") \
+        == datetime.date(2026, 11, 1)
+    with pytest.raises(ValueError):  # seasons: only the option's value has the date
+        scraper.parse_issue_date("Fall 2026; Vol. 68 (1)")
+
+
+def test_new_issue_resumes_or_cleans_tmpdir(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(proquest_dl, "run", lambda args: seen.append(args.continue_download))
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "NewScientist-2026-09-26.pdf").write_bytes(b"%PDF-")
+    (tmp_path / "out" / "NewScientist-2026-10-31.pdf").write_bytes(b"%PDF-")
+    tmpdir = tmp_path / "tmp"
+    argv = ["40711", "--new-issue", "--keep-days", "31", "--outdir", str(tmp_path / "out"),
+            "--tmpdir", str(tmpdir)]
+    # a run that stopped before saving the list of articles: start again
+    (tmpdir / "download").mkdir(parents=True)
+    proquest_dl.main(argv, today=datetime.date(2026, 11, 17))
+    assert seen == [False] and not tmpdir.exists()
+    assert [p.name for p in (tmp_path / "out").iterdir()] == ["NewScientist-2026-10-31.pdf"]
+    # an interrupted download: resume it
+    tmpdir.mkdir()
+    Issue(date=datetime.date(2026, 11, 7)).save(tmpdir / "issue.json")
+    proquest_dl.main(argv, today=datetime.date(2026, 11, 17))
+    assert seen == [False, True]

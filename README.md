@@ -91,6 +91,7 @@ ProQuest asks for a captcha after about 40 PDF files in a session. With `--headl
 - `--issue-date YYYY-MM-DD`: the issue to download, by the date ProQuest shows for it (for monthly magazines, the first day of the month). Default: the latest issue.
 - `--outdir DIR`: where to save the PDF (default: the current folder).
 - `--continue-download`: resume an interrupted download from the temporary folder (`--tmpdir`, default `./proquest-dl-temp`).
+- `--new-issue` and `--keep-days N`, for a scheduled run of any publication (`economist-dl` has its own, see above): download the latest issue on ProQuest unless it is already in `--outdir`, resume an interrupted download by itself, stop without an error when ProQuest asks for a captcha; first delete the issues in `--outdir` dated over N days ago. Each run logs in to ProQuest to see which issue is the latest, so give each publication its own `--outdir` and `--tmpdir`.
 - `--pause MIN MAX`: random pause in seconds after each page load (default 2 to 5).
 - `--exclude-section SECTION`: skip the articles of a section (e.g. `"Special report"`); it costs one more page load per article.
 - `--firefox-profile-path DIR`: another Firefox profile, used in place; no other Firefox may be using it.

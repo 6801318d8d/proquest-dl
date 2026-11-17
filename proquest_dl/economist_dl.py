@@ -11,7 +11,6 @@ The same options as proquest-dl, without the publication ID, plus
 
 import datetime
 import logging
-import re
 import shutil
 from pathlib import Path
 
@@ -21,8 +20,6 @@ from proquest_dl.ProQuestWebScraper import (CaptchaRequired, IssueNotFound,
                                             known_publication_ids)
 
 ECONOMIST = known_publication_ids["The Economist"]
-# Name that proquest-dl gives to the PDF of an issue (see Issue.build_final_fp)
-ISSUE_FILE = re.compile(r"TheEconomist-(\d{4}-\d{2}-\d{2})\.pdf")
 
 
 def last_saturday(today):
@@ -36,32 +33,19 @@ def latest_issue(today):
     return last_saturday(today + datetime.timedelta(days=2))
 
 
-def prune(outdir, keep_days, today):
-    """Delete the issues in outdir dated more than keep_days days before today."""
-    for fp in Path(outdir).glob("TheEconomist-*.pdf"):
-        found = ISSUE_FILE.fullmatch(fp.name)
-        if found and (today - datetime.date.fromisoformat(found.group(1))).days > keep_days:
-            fp.unlink()
-            logging.info(f"Deleted {fp}")
-
-
 def main(argv=None, today=None):
     proquest_dl.setup()
+    # --new-issue: here the latest issue is computed from today's date
+    # (dated Saturday, on ProQuest from the Thursday before), so no browser
+    # opens when it is already in --outdir, and an issue that ProQuest does
+    # not have yet stops the run without an error
     parser = proquest_dl.build_parser(publication_id=ECONOMIST, prog="economist-dl")
-    parser.add_argument('--new-issue', action='store_true',
-                        help=("Download the latest issue (dated Saturday, on "
-                              "ProQuest from the Thursday before), unless "
-                              "it is already in --outdir; when ProQuest does not "
-                              "have it yet, stop without an error (for a "
-                              "scheduled run)"))
-    parser.add_argument('--keep-days', type=int, metavar="N", default=None,
-                        help="First delete the issues in --outdir dated over N days ago")
     args = parser.parse_args(argv)
     args.publication_id = ECONOMIST
     today = today or datetime.date.today()
 
     if args.keep_days is not None:
-        prune(args.outdir, args.keep_days, today)
+        proquest_dl.prune(args.outdir, args.keep_days, today)
 
     if args.new_issue:
         if args.issue_date:

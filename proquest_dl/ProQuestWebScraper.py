@@ -156,20 +156,13 @@ class ProQuestWebScraper:
 
     def parse_issue_date(self, text):
         """Date of an issue from its label in the issue select box."""
-        text = text.strip()
-        if self.publication_id == known_publication_ids["The Economist"]:
-            # e.g. "Nov 14, 2026; Vol. 457 (9473)"
-            return datetime.datetime.strptime(
-                text.split(";")[0].strip(), "%b %d, %Y").date()
-        elif self.publication_id == known_publication_ids["MIT Technology Review"]:
-            # monthly: the first day of the month
-            month = datetime.datetime.strptime(
-                text[0:3], "%b").date().month
-            year = int(text.split()[1][:-1])
-            return datetime.date(year=year, month=month, day=1)
-        else:
-            raise Exception(
-                "We miss logic for issue date for this publication :(")
+        head = text.split(";")[0].strip()
+        try:  # e.g. "Nov 14, 2026; Vol. 457 (9473)" or "Nov 15, 2026"
+            return datetime.datetime.strptime(head, "%b %d, %Y").date()
+        except ValueError:
+            # monthly, e.g. "Nov/Dec 2026; Vol. 129 (6)": the first day of the month
+            month = datetime.datetime.strptime(head[0:3], "%b").month
+            return datetime.date(int(re.search(r"\d{4}", head).group()), month, 1)
 
     def issue_date_of(self, option):
         """Date of an option of the issue select box: from its value

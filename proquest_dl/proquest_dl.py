@@ -6,6 +6,7 @@ import argparse
 import datetime
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from pathlib import Path
 import requests
 
 from proquest_dl.Issue import Issue
-from proquest_dl.ProQuestWebScraper import (ProQuestWebScraper,
+from proquest_dl.ProQuestWebScraper import (CaptchaRequired, ProQuestWebScraper,
                                             known_publication_ids)
 from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pdfs,
                               generate_toc, get_page_size, insert_bookmarks,
@@ -27,6 +28,18 @@ from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pd
 # # Config
 
 default_firefox_profile = Path.home() / ".proquest-dl" / "firefox-profile"
+# Name that proquest-dl gives to the PDF of an issue (see Issue.build_final_fp)
+ISSUE_FILE = re.compile(r".+-(\d{4}-\d{2}-\d{2})\.pdf")
+
+
+def prune(outdir, keep_days, today):
+    """Delete the issues (NAME-YYYY-MM-DD.pdf) in outdir dated more than
+    keep_days days before today."""
+    for fp in Path(outdir).glob("*.pdf"):
+        found = ISSUE_FILE.fullmatch(fp.name)
+        if found and (today - datetime.date.fromisoformat(found.group(1))).days > keep_days:
+            fp.unlink()
+            logging.info(f"Deleted {fp}")
 
 
 def load_dotenv():
@@ -191,13 +204,42 @@ def build_parser(publication_id=None, prog="proquest-dl"):
                               "ProQuest login is kept between runs. "
                               "No other Firefox may be using it."),
                         default=str(default_firefox_profile))
+    parser.add_argument('--new-issue', action='store_true',
+                        help=("For a scheduled run: download the latest issue "
+                              "unless it is already in --outdir, resume an "
+                              "interrupted download in --tmpdir by itself, and "
+                              "stop without an error when ProQuest asks for a "
+                              "captcha (the next run resumes)"))
+    parser.add_argument('--keep-days', type=int, metavar="N", default=None,
+                        help=("First delete the issues in --outdir dated over "
+                              "N days ago"))
     return parser
 
 
-def main(argv=None):
+def main(argv=None, today=None):
     """Command line entry point of proquest-dl."""
     setup()
-    run(build_parser().parse_args(argv))
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.keep_days is not None:
+        prune(args.outdir, args.keep_days, today or datetime.date.today())
+    if args.new_issue:
+        if args.issue_date:
+            parser.error("--new-issue downloads the latest issue")
+        # Resume an interrupted download; drop a run that stopped before
+        # the list of articles was saved
+        tmpdir = Path(args.tmpdir)
+        if (tmpdir / "issue.json").is_file():
+            args.continue_download = True
+        elif tmpdir.is_dir():
+            shutil.rmtree(tmpdir)
+    try:
+        run(args)
+    except CaptchaRequired:
+        if not args.new_issue:
+            raise
+        logging.warning("ProQuest asks for a captcha: the next run resumes the "
+                        "download (the PDF files already downloaded are kept)")
 
 
 def run(args):
@@ -290,6 +332,11 @@ def run(args):
             logging.info(f"Issue date of publication: {issue.date}")
             if args.issue_date is not None:
                 assert issue.date == args.issue_date, issue.date
+            done = Path(args.outdir) / issue.build_final_fp()
+            if args.new_issue and done.is_file():
+                logging.info(f"Already downloaded: {done} (the latest issue on ProQuest)")
+                shutil.rmtree(args.tmpdir)
+                return
 
             # Download list of articles
             scraper.retrieve_articles_list(issue)
