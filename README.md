@@ -21,7 +21,7 @@ This builds up a PDF issue of the magazine in question.
 
     If ProQuest shows a captcha, solve it in the browser window: the download goes on by itself, and the pauses between pages double for the rest of the run.
 
-The browser is used to log in, choose the issue and read its list of articles. The PDF files are then downloaded over HTTP with the browser's cookies, 4 at a time, without opening each article in the browser; the browser takes over only for the articles where ProQuest answers with a captcha.
+The browser is used to log in, choose the issue and read its list of articles. The PDF files are then downloaded over HTTP with the browser's cookies, one at a time with the `--pause` between them (about 4 minutes for an issue of The Economist), without opening each article in the browser; the browser takes over only for an article where ProQuest answers with a captcha, and the download goes on over HTTP once it is solved.
 
 ## Automatic login
 

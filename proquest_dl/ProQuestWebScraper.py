@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import html
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -282,19 +281,16 @@ class ProQuestWebScraper:
     def download_articles(self, issue):
         """Download the PDF files without opening the articles in the
         browser: their PDF pages are read over HTTP with the browser's
-        cookies, 4 at a time; the browser takes over where that fails."""
+        cookies, one at a time (4 at a time made ProQuest ask for a captcha
+        after about 40 articles); the browser takes over where that fails."""
         jobs = [(article, pdffn) for article in issue.articles
                 if (pdffn := self.download_article(article))]
         logging.info(f"PDF files to download: {len(jobs)}")
         cookies = self.session_cookies()
         need_browser = []
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = {ex.submit(self.fetch_pdf, article, pdffn, cookies):
-                       (article, pdffn) for article, pdffn in jobs}
-            for future in tqdm(as_completed(futures), total=len(futures),
-                               desc="PDF files"):
-                if not future.result():
-                    need_browser.append(futures[future])
+        for article, pdffn in tqdm(jobs, desc="PDF files"):
+            if not self.fetch_pdf(article, pdffn, cookies):
+                need_browser.append((article, pdffn))
         # Usually a captcha: the browser shows it once, then HTTP goes on
         # with the cookies that solving it gave
         for article, pdffn in need_browser:
@@ -310,22 +306,18 @@ class ProQuestWebScraper:
 
     def get_art_count(self):
         """
-        Get number of articles to download
+        Get number of articles to download (the list can take a few
+        seconds to appear; if it does not, show the issue contents again)
         """
+        items = (By.CSS_SELECTOR, "li.resultItem.ltr")
         for i in range(3):
-            count = len(list(self.browser.find_elements(
-                By.CSS_SELECTOR, "li.resultItem.ltr")))
-            if count == 0:
+            try:
+                WebDriverWait(self.browser, 15).until(
+                    EC.presence_of_element_located(items))
+                return len(self.browser.find_elements(*items))
+            except TimeoutException:
                 self.click_view_issue_btn()
-                time.sleep(5)
-                self.browser.refresh()
-                time.sleep(5)
-                continue
-            else:
-                break
-        if count == 0:
-            raise Exception("Cannot get number of articles")
-        return count
+        raise Exception("Cannot get number of articles")
 
     def get_publication_name(self):
         css = "div#pubContentSummaryFormZone > div.row > div.contentSummaryHeader > h1"
@@ -352,9 +344,14 @@ class ProQuestWebScraper:
                 # Use the profile in place, not a temporary copy, so the
                 # ProQuest login is kept from one run to the next
                 Path(firefox_profile_path).mkdir(parents=True, exist_ok=True)
-                # Never offer to save the institution's password
+                # Never offer to save the institution's password. Keep the
+                # cookie of ProQuest's login redirector (it remembers where to
+                # go back): sent with the identity provider's cross-site POST,
+                # and not purged as a bounce tracker
                 (Path(firefox_profile_path) / "user.js").write_text(
-                    'user_pref("signon.rememberSignons", false);\n')
+                    'user_pref("signon.rememberSignons", false);\n'
+                    'user_pref("network.cookie.sameSite.laxByDefault", false);\n'
+                    'user_pref("privacy.bounceTrackingProtection.mode", 0);\n')
                 options.add_argument("-profile")
                 options.add_argument(str(firefox_profile_path))
             service = None
@@ -402,6 +399,9 @@ class ProQuestWebScraper:
         only, so a wrong password cannot lock the account.
         """
         logging.info(f"Logging in through {institution_url}")
+        # Start from a clean ProQuest session: with the cookies of an old
+        # one, ProQuest lands on its home page without logging in
+        self.browser.delete_all_cookies()
         self.browser.get(institution_url)
         password = (By.CSS_SELECTOR, "input[type=password]")
         # ProQuest comes back to the page it was on (the publication) when
@@ -477,6 +477,7 @@ class ProQuestWebScraper:
             if institution_url:
                 self.log_in(url, institution_url, get_credentials)
                 institution_url = None
+                last_message = time.monotonic() - 50
                 continue
             now = time.monotonic()
             if now > deadline:
@@ -540,7 +541,7 @@ class ProQuestWebScraper:
         time.sleep(5)
 
     def click_view_issue_btn(self):
-        # Click "Show issue contents" button
-        locator = (By.CSS_SELECTOR, "input[value='Show issue contents']")
+        # Click "Show issue contents" button (its label depends on the language)
+        locator = (By.CSS_SELECTOR, "input[name=searchPubIssues]")
         WebDriverWait(self.browser, 30).until(
             EC.element_to_be_clickable(locator)).click()
