@@ -4,10 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from selenium import webdriver
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    TimeoutException,
-)
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
@@ -30,6 +27,39 @@ known_publication_ids = {
 CAPTCHA = (By.CSS_SELECTOR, "form#verifyCaptcha")
 ISSUE_SELECT = (By.CSS_SELECTOR, "select#issueSelected")
 
+# One call to the browser returns the whole list of articles of the issue
+ARTICLES_JS = """
+return Array.from(document.querySelectorAll("li.resultItem.ltr")).map(li => {
+    const q = css => li.querySelector(css);
+    const title = q("div.truncatedResultsTitle");
+    const ref = q("span.jnlArticle");
+    const details = q("a.addFlashPageParameterformat_abstract")
+        || q("a.addFlashPageParameterformat_citation");
+    const pdf = q("a.format_pdf");
+    return {
+        title: title ? title.innerText.trim() : null,
+        loc: ref ? ref.innerText : "",
+        detailsurl: details ? details.href : null,
+        pdfurl: pdf ? pdf.href : null,
+    };
+});
+"""
+
+
+def parse_pages(loc):
+    """Pages of an article from its ProQuest reference.
+
+    'The Economist; London Vol. 457, Iss. 9473,  (Nov 14, 2026): 17-19, 22.'
+    gives [17, 18, 19, 22]. Raises an exception when there are no pages.
+    """
+    pages_str = re.match(".*:(.*)", loc).group(1).replace(".", "")
+    pages_str = re.sub(r"\s+", "", pages_str)
+    pages = []
+    for part in pages_str.split(","):
+        first, _, last = part.partition("-")
+        pages.extend(range(int(first), int(last or first) + 1))
+    return pages
+
 
 class ProQuestWebScraper:
 
@@ -43,45 +73,6 @@ class ProQuestWebScraper:
         self.exclude_sections = set(exclude_sections)
         self.user_agent = None
         self.downloads = []
-
-    # Generic
-
-    def wait_element_to_be_clickable(
-        self,
-        locator,
-        timeout=5,
-        starting_element=None,
-    ):
-        assert (len(locator) == 2)
-        if not starting_element:
-            starting_element = self.browser
-        cond = EC.element_to_be_clickable(locator)
-        try:
-            el = WebDriverWait(starting_element, timeout).until(cond)
-        except TimeoutException as e:
-            msg = "Timed out waiting for element to be clickable\n"
-            msg += f"locator={locator}\n"
-            msg += f"timeout={timeout}\n"
-            msg += f"starting_element={starting_element}"
-            logging.error(msg)
-            raise e
-        return el
-
-    def wait_element_to_be_clickable_css(
-        self,
-        css,
-        timeout=5,
-        starting_element=None,
-    ):
-        locator = (By.CSS_SELECTOR, css)
-        args = {
-            "locator": locator,
-            "timeout": timeout,
-            "starting_element": starting_element,
-        }
-        return self.wait_element_to_be_clickable(**args)
-
-    # Specific
 
     def get_section(self):
         try:
@@ -101,6 +92,7 @@ class ProQuestWebScraper:
             return datetime.datetime.strptime(
                 text.split(";")[0].strip(), "%b %d, %Y").date()
         elif self.publication_id == known_publication_ids["MIT Technology Review"]:
+            # monthly: the first day of the month
             month = datetime.datetime.strptime(
                 text[0:3], "%b").date().month
             year = int(text.split()[1][:-1])
@@ -184,8 +176,13 @@ class ProQuestWebScraper:
             EC.presence_of_element_located(locator))
         pdf_file_url = el.get_attribute("src")
 
-        # Download the PDF file in the background while the browser goes on
-        cookies = {c["name"]: c["value"] for c in self.browser.get_cookies()}
+        # Download the PDF file in the background while the browser goes on.
+        # The jar keeps each cookie's domain, so requests sends the session
+        # cookies only to the site they belong to.
+        cookies = requests.cookies.RequestsCookieJar()
+        for c in self.browser.get_cookies():
+            cookies.set(c["name"], c["value"],
+                        domain=c.get("domain", ""), path=c.get("path", "/"))
         self.downloads.append(self.executor.submit(
             self.save_pdf, pdf_file_url, cookies, pdffn))
 
@@ -214,82 +211,35 @@ class ProQuestWebScraper:
         """
         Download list of articles
         """
-        result_items = self.browser.find_elements(
-            By.CSS_SELECTOR, "li.resultItem.ltr")
-
-        for result_item in tqdm(result_items):
-
-            # Retrieve article title
-            locator = (By.CSS_SELECTOR, "div.truncatedResultsTitle")
-            title = result_item.find_element(*locator).text.strip()
+        for item in self.browser.execute_script(ARTICLES_JS):
+            title = item["title"]
+            if title is None:
+                raise Exception(f"Article without a title: {item}")
             # whether this article is the Table of Contents
-            is_toc = False
-            if title == "Table of Contents":
+            is_toc = title == "Table of Contents"
+            if is_toc:
                 issue.toc = True
-                is_toc = True
 
-            # Retrieve article reference
-            # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
-            locator = (By.CSS_SELECTOR, "span.jnlArticle")
-            loc = result_item.find_element(*locator).text
-
-            # Try to extract pages from reference
-            # * -> Causes the resulting RE to match
-            #      0 or more repetitions of the preceding RE
+            # Pages from the reference, e.g.
+            # "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
             try:
-                pages_str = re.match(".*:(.*)", loc).group(1).replace(".", "")
-                pages_str = re.sub(r"\s+", "", pages_str).strip()
-                pages = list()
-                for page_part in pages_str.split(","):
-                    page_part = page_part.strip()
-                    for page in page_part.split("-"):
-                        page = int(page.strip())
-                        pages.append(page)
+                pages = parse_pages(item["loc"])
             except Exception:
-                if title == "Table of Contents":
+                if is_toc:
                     # Table of Contents has no page number
-                    # loc = "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023)."
                     pages = None
                 else:
-                    # pages = "na"
-                    msg = "Error extracting pages\n"
-                    msg += f"title={title}\n"
-                    msg += f"loc={loc}"
-                    raise Exception(msg)
+                    raise Exception("Error extracting pages\n"
+                                    f"title={title}\nloc={item['loc']}")
 
-            # Extract URL of abstract/details page
-            try:
-                # Locator for "Abstract/Details"
-                locator = (By.CSS_SELECTOR,
-                           "a.addFlashPageParameterformat_abstract")
-                detailsurl = result_item.find_element(*locator) \
-                    .get_attribute("href")
-            except NoSuchElementException:
-                try:
-                    # Locator for "Details"
-                    locator = (By.CSS_SELECTOR,
-                               "a.addFlashPageParameterformat_citation")
-                    detailsurl = result_item.find_element(*locator) \
-                        .get_attribute("href")
-                except NoSuchElementException:
-                    logging.info(f"We can't find details URL "
-                                 f" for {title}")
-                    detailsurl = None
+            if not item["detailsurl"]:
+                logging.info(f"We can't find details URL for {title}")
+            if not item["pdfurl"]:
+                logging.info(f"We can't find PDF URL for {title}")
 
-            # Extract URL of PDF files
-            try:
-                locator = (By.CSS_SELECTOR, "a.format_pdf")
-                pdfurl = result_item.find_element(*locator) \
-                                    .get_attribute("href")
-            except NoSuchElementException:
-                logging.info(f"We can't find PDF URL "
-                             f" for {title}")
-                pdfurl = None
-
-            article = Article(title=title, pages=pages,
-                              pdfurl=pdfurl, detailsurl=detailsurl,
-                              is_toc=is_toc)
-            issue.articles.append(article)
+            issue.articles.append(Article(
+                title=title, pages=pages, pdfurl=item["pdfurl"],
+                detailsurl=item["detailsurl"], is_toc=is_toc))
 
     def get_art_count(self):
         """
@@ -388,11 +338,10 @@ class ProQuestWebScraper:
                 last_message = now
             time.sleep(2)
 
-    def select_issue(self, journal_year, journal_month, journal_issue=None,
-                     issue_date=None):
-        """Select an issue by its index in the month, or by its date."""
+    def select_issue(self, issue_date):
+        """Select the issue of the given date and show its contents."""
         # Select year
-        logging.info(f"Selecting year: {journal_year}")
+        logging.info(f"Selecting year: {issue_date.year}")
         try:
             select_element = self.browser.find_element(
                 By.CSS_SELECTOR,
@@ -400,12 +349,11 @@ class ProQuestWebScraper:
         except NoSuchElementException:
             raise Exception("Cannot find year select box")
         select = Select(select_element)
-        select.select_by_visible_text(str(journal_year))
+        select.select_by_visible_text(str(issue_date.year))
         time.sleep(2)
 
         # Select month
-        month_date = datetime.date(year=1, month=journal_month, day=1)
-        month_locale_full_name = month_date.strftime("%B")
+        month_locale_full_name = issue_date.strftime("%B")
         logging.info(f"Selecting month: {month_locale_full_name}")
         try:
             select_element = self.browser.find_element(
@@ -418,27 +366,22 @@ class ProQuestWebScraper:
         time.sleep(2)
 
         # Select issue
+        logging.info(f"Selecting issue of {issue_date}")
         try:
-            select_element = self.browser.find_element(*ISSUE_SELECT)
+            select = Select(self.browser.find_element(*ISSUE_SELECT))
         except NoSuchElementException:
             raise Exception("Cannot find issue select box")
-        select = Select(select_element)
-        if issue_date is None:
-            logging.info(f"Selecting issue: {journal_issue}")
-            select.select_by_index(journal_issue)
+        labels = [option.text.strip() for option in select.options]
+        for i, label in enumerate(labels):
+            try:
+                if self.parse_issue_date(label) == issue_date:
+                    break
+            except ValueError:
+                continue
         else:
-            logging.info(f"Selecting issue of {issue_date}")
-            labels = [option.text.strip() for option in select.options]
-            for i, label in enumerate(labels):
-                try:
-                    if self.parse_issue_date(label) == issue_date:
-                        break
-                except ValueError:
-                    continue
-            else:
-                raise Exception(f"No issue dated {issue_date}. "
-                                f"Issues of that month: {labels}")
-            select.select_by_index(i)
+            raise Exception(f"No issue dated {issue_date}. "
+                            f"Issues of that month: {labels}")
+        select.select_by_index(i)
 
         # Click on "View Issue" button
         time.sleep(4)
@@ -447,9 +390,6 @@ class ProQuestWebScraper:
 
     def click_view_issue_btn(self):
         # Click "Show issue contents" button
-        view_issue_css = "input[value='Show issue contents']"
-        view_issue = self.wait_element_to_be_clickable_css(
-            view_issue_css,
-            timeout=30,
-        )
-        view_issue.click()
+        locator = (By.CSS_SELECTOR, "input[value='Show issue contents']")
+        WebDriverWait(self.browser, 30).until(
+            EC.element_to_be_clickable(locator)).click()

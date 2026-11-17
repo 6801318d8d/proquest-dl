@@ -6,12 +6,10 @@ import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal
 
 from natsort import natsorted
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 
-from proquest_dl import pdfbookmarker
 from proquest_dl.ProQuestWebScraper import known_publication_ids
 
 
@@ -21,18 +19,21 @@ def run_in_parallel(func, jobs):
         list(ex.map(lambda job: func(*job), jobs))
 
 
-def insert_bookmarks(downloaddir, issue, infn, outfn):
-    # Save bookmark into txt file
-    txt = ""
+def insert_bookmarks(issue, infn, outfn):
+    """One bookmark per article, on its first page (page N of the magazine
+    is page N of the PDF)."""
+    writer = PdfWriter(clone_from=infn)
     for article in issue.articles:
-        if not article.pages:
-            continue
-        txt += '+"' + article.title + '"|' + str(article.pages[0]) + "\n"
-    bookmarkfn = downloaddir / "bookmark.txt"
-    with open(bookmarkfn, "w", encoding="utf-8") as fh:
-        fh.write(txt)
-    # Put bookmark into PDF
-    pdfbookmarker.run_script(str(infn), str(bookmarkfn), str(outfn))
+        if article.pages:
+            writer.add_outline_item(title=article.title,
+                                    page_number=article.pages[0] - 1)
+    writer.write(outfn)
+
+
+def write_blank_page(fp, page_size):
+    writer = PdfWriter()
+    writer.add_blank_page(width=page_size[0], height=page_size[1])
+    writer.write(fp)
 
 
 def merge_pdf(indir, outfp):
@@ -64,8 +65,13 @@ def extract_single_pages_from_pdfs(indir, outdir):
     # When two files contain the same page, the later file (in natural order) wins
     jobs = {}
     for pagesfn in natsorted(list(indir.iterdir())):
-        pages = sorted(get_pages_from_file(pagesfn))
-        for this_page_i, this_page in enumerate(pages):
+        pages = sorted(get_pages_from_file(pagesfn), key=int)
+        npages = get_number_of_pages(pagesfn)
+        if npages != len(pages):
+            logging.warning(f"{pagesfn.name} has {npages} pages instead of "
+                            f"{len(pages)}: only the first {min(npages, len(pages))} "
+                            "are used")
+        for this_page_i, this_page in enumerate(pages[:npages]):
             outfn = outdir / ("pages_" + str(this_page) + ".pdf")
             jobs[outfn] = (pagesfn, this_page_i + 1, outfn)
     run_in_parallel(extract_page, jobs.values())
@@ -105,7 +111,10 @@ def generate_toc(issue, tocdir, outdir):
     logging.info(
         f"Command to convert self-generated TOC from Markdown to PDF: '{cmd}'")
     subprocess.run(cmd, check=True)
-    shutil.move(tocpdffile, outdir / "pages_2,3.pdf")
+    # The TOC goes from page 2 on, over as many pages as pandoc made
+    npages = get_number_of_pages(tocpdffile)
+    page_range = ",".join(str(x) for x in range(2, 2 + npages))
+    shutil.move(tocpdffile, outdir / f"pages_{page_range}.pdf")
 
 
 # %%
@@ -130,12 +139,15 @@ def economist_rename_toc(issue, tocdir, outdir):
     # Get first page of TOC from PDF file
     page_start = get_text_from_top_right_corner(
         tocpdf2, 40, 50, issue.page_size)
-    page_start = int(page_start)
-    assert 0 < page_start <= 10
-    logging.info(f"TOC starting page: {page_start}")
     # Get number of pages of TOC
     npages = get_number_of_pages(tocpdf2)
-    assert 0 < npages <= 5
+    if not (page_start.isdigit() and 0 < int(page_start) <= 10
+            and 0 < npages <= 5):
+        logging.warning(f"TOC left out: no page number in its top right corner "
+                        f"(found '{page_start}', {npages} pages)")
+        return
+    page_start = int(page_start)
+    logging.info(f"TOC starting page: {page_start}")
     logging.info(f"TOC number of pages: {npages}")
     # Generate page range
     page_range = ",".join([str(x)
@@ -146,14 +158,11 @@ def economist_rename_toc(issue, tocdir, outdir):
     shutil.copy(tocpdf2, pdffn)
 
 
-# borb 2.1 cannot read PDF files back (it fails even on its own output),
-# so the reading functions use pypdf; borb only writes the blank and cover pages.
-
 # %%
 def get_page_size(fp):
-    # page size in "default user space units", as borb's Page() wants it
+    # page size in points ("default user space units")
     box = PdfReader(fp).pages[0].mediabox
-    return (Decimal(str(float(box.width))), Decimal(str(float(box.height))))
+    return (float(box.width), float(box.height))
 
 
 # %%

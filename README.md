@@ -6,7 +6,7 @@ Download magazines from ProQuest.
 
 You can download any magazine, although this has been tested on "The Economist" and "MIT Technology Review".
 
-For the former two magazines, covers are also downloaded from their respective websites (ProQuest doesn't provide covers).
+For The Economist, the cover is also downloaded from its website (ProQuest doesn't provide covers).
 
 The pages of the magazine are put in the correct order in the PDF file (that is, page 5 will be page 5 in the resulting PDF file, and so on).
 
@@ -27,7 +27,7 @@ You will need in your PATH:
 
 - `qpdf`;
 - Ghostscript (`gs`, or `gswin64c` on Windows), to compress the final PDF;
-- ImageMagick (`magick`), for the cover;
+- ImageMagick (`magick`), for the cover of The Economist;
 - `pandoc` with a LaTeX engine, only for magazines without a table of contents on ProQuest.
 
 Selenium finds or downloads `geckodriver` by itself.
@@ -54,7 +54,7 @@ uv run economist-dl --issue-date 2026-11-14  # the issue of that Saturday
 
 ### Useful options
 
-- `--issue-date YYYY-MM-DD`: the issue to download, by the date ProQuest shows for it.
+- `--issue-date YYYY-MM-DD`: the issue to download, by the date ProQuest shows for it (for monthly magazines, the first day of the month). Default: the latest issue.
 - `--outdir DIR`: where to save the PDF (default: the current folder).
 - `--continue-download`: resume an interrupted download from the temporary folder (`--tmpdir`, default `./proquest-dl-temp`).
 - `--pause MIN MAX`: random pause in seconds after each page load (default 2 to 5).
