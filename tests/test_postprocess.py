@@ -7,10 +7,11 @@ from types import SimpleNamespace
 import pytest
 from pypdf import PdfReader
 
-from proquest_dl import proquest_dl
+from proquest_dl import economist_dl, proquest_dl
 from proquest_dl.Article import Article
 from proquest_dl.Issue import Issue
-from proquest_dl.ProQuestWebScraper import (ProQuestWebScraper, article_from_item,
+from proquest_dl.ProQuestWebScraper import (CaptchaRequired, ProQuestWebScraper,
+                                            article_from_item,
                                             back_on_proquest, parse_pages,
                                             pdf_link_from_html)
 from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pdfs,
@@ -180,6 +181,34 @@ def test_issue_save_load(tmp_path):
                             Article("Table of Contents", None, None, None, True)])
     issue.save(tmp_path / "issue.json")
     assert Issue.load(tmp_path / "issue.json") == issue
+
+
+def test_last_saturday():
+    sat = datetime.date(2026, 11, 14)
+    for day in range(7):  # Saturday 14 to Friday 20 November 2026
+        assert economist_dl.last_saturday(sat + datetime.timedelta(days=day)) == sat
+
+
+def test_prune_and_new_issue_already_downloaded(tmp_path):
+    for name in ("TheEconomist-2026-10-10.pdf", "TheEconomist-2026-10-17.pdf",
+                 "TheEconomist-2026-11-14.pdf", "notes.pdf"):
+        (tmp_path / name).write_bytes(b"%PDF-")
+    # 2026-11-17: the issue of 2026-11-14 is already there, so no browser
+    economist_dl.main(["--new-issue", "--keep-days", "31", "--outdir", str(tmp_path)],
+                      today=datetime.date(2026, 11, 17))
+    # 38 days old: deleted; 31 days old: kept
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "TheEconomist-2026-10-17.pdf", "TheEconomist-2026-11-14.pdf", "notes.pdf"]
+
+
+def test_captcha_in_headless_browser_stops():
+    scraper = ProQuestWebScraper("41716", None, None)
+    scraper.headless = True
+    scraper.browser = SimpleNamespace(find_elements=lambda *locator: ["form"])
+    with pytest.raises(CaptchaRequired):
+        scraper.check_captcha()
+    scraper.browser = SimpleNamespace(find_elements=lambda *locator: [])
+    assert scraper.check_captcha() is False
 
 
 def test_economist_issue_date():

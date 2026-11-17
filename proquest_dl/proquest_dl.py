@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -49,13 +50,29 @@ def get_credentials():
     url = os.environ.get("PROQUEST_CREDENTIALS_URL")
     if not url:
         return None
+    # A command that starts the server of PROQUEST_CREDENTIALS_URL, run
+    # only now that the sign-in page asks for the password
+    command = os.environ.get("PROQUEST_CREDENTIALS_COMMAND")
+    server = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL) if command else None
+    deadline = time.monotonic() + (30 if server else 0)
     try:
-        data = requests.get(url, timeout=10).json()
-        return data["login"], data["password"]
+        while True:
+            try:
+                data = requests.get(url, timeout=10).json()
+                return data["login"], data["password"]
+            except requests.ConnectionError:
+                # the server is still starting
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.5)
     except Exception as e:
         logging.warning(f"No credentials from PROQUEST_CREDENTIALS_URL "
                         f"({type(e).__name__}): log in by hand")
         return None
+    finally:
+        if server and server.poll() is None:
+            server.terminate()
 
 
 def add_cover(cover_url, downloaddir, pagesdir, page_size):
@@ -89,13 +106,8 @@ def compress_pdf(infp, outfp):
     subprocess.run(cmd, check=True)
 
 
-def main(argv=None, publication_id=None, prog="proquest-dl"):
-    """Command line entry point.
-
-    publication_id: set by wrappers for a single publication
-    (see economist_dl.py); the command then has no publication_id argument.
-    """
-
+def setup():
+    """Logging, Selenium settings and .env, before parsing the command line."""
     logging.basicConfig(
         force=True,
         level=logging.INFO,
@@ -110,8 +122,11 @@ def main(argv=None, publication_id=None, prog="proquest-dl"):
     logging.info("Start")
     logging.info("Python version: " + sys.executable)
 
-    # %%
-    # argparse
+
+def build_parser(publication_id=None, prog="proquest-dl"):
+    """The command line options. publication_id: set by wrappers for a
+    single publication (see economist_dl.py), which then have no
+    publication_id argument."""
     parser = argparse.ArgumentParser(
         prog=prog,
         description='Download journal issues from ProQuest',
@@ -176,10 +191,17 @@ def main(argv=None, publication_id=None, prog="proquest-dl"):
                               "ProQuest login is kept between runs. "
                               "No other Firefox may be using it."),
                         default=str(default_firefox_profile))
-    args = parser.parse_args(argv)
-    if publication_id is not None:
-        args.publication_id = publication_id
+    return parser
 
+
+def main(argv=None):
+    """Command line entry point of proquest-dl."""
+    setup()
+    run(build_parser().parse_args(argv))
+
+
+def run(args):
+    """Download the issue that the parsed command line asks for."""
     args.exclude_section = args.exclude_section or []
 
     # Make variables

@@ -37,6 +37,14 @@ PROCEED = (By.CSS_SELECTOR, "button[name=_eventId_proceed], "
            "input[type=submit][name=_eventId_proceed]")
 
 
+class IssueNotFound(Exception):
+    """ProQuest has no issue of the requested date (yet)."""
+
+
+class CaptchaRequired(Exception):
+    """ProQuest asks for a captcha, and nobody can solve it in a headless browser."""
+
+
 def back_on_proquest(url):
     """On a ProQuest page that is not one of the login redirects
     (www.proquest.com/shibboleth..., shibboleth-sp.prod.proquest.com).
@@ -132,6 +140,9 @@ class ProQuestWebScraper:
         self.sleep_time = tuple(sleep_time)
         self.exclude_sections = set(exclude_sections)
         self.user_agent = None
+        self.headless = False
+        self.captcha_over_http = False
+        self.password_page = None  # where the password was sent (once per run)
 
     def get_section(self):
         try:
@@ -160,9 +171,21 @@ class ProQuestWebScraper:
             raise Exception(
                 "We miss logic for issue date for this publication :(")
 
+    def issue_date_of(self, option):
+        """Date of an option of the issue select box: from its value
+        (e.g. "02026Y11Y14#Nov 14, 2026; Vol. 461 (9525)"), else its label."""
+        found = re.search(r"(\d{4})Y(\d{2})Y(\d{2})", option.get_attribute("value") or "")
+        try:
+            return datetime.date(*(int(x) for x in found.groups()))
+        except (AttributeError, ValueError):  # no date in the value
+            try:
+                return self.parse_issue_date(option.text)
+            except ValueError:
+                return None
+
     def get_issue_date(self):
         select = Select(self.browser.find_element(*ISSUE_SELECT))
-        return self.parse_issue_date(select.first_selected_option.text)
+        return self.issue_date_of(select.first_selected_option)
 
     def go_to_page(self, url):
         while True:
@@ -249,6 +272,11 @@ class ProQuestWebScraper:
         except requests.RequestException as e:
             logging.warning(f"Pages {article.pages}: {e}")
             return False
+        if "verifyCaptcha" in r.text:
+            # No more requests over HTTP: they would all get the captcha
+            logging.warning("ProQuest answers with a captcha")
+            self.captcha_over_http = True
+            return False
         link = pdf_link_from_html(r.text)
         # Pause to prevent captcha
         time.sleep(random.uniform(*self.sleep_time))
@@ -289,11 +317,13 @@ class ProQuestWebScraper:
         cookies = self.session_cookies()
         need_browser = []
         for article, pdffn in tqdm(jobs, desc="PDF files"):
-            if not self.fetch_pdf(article, pdffn, cookies):
+            if self.captcha_over_http or not self.fetch_pdf(article, pdffn, cookies):
                 need_browser.append((article, pdffn))
-        # Usually a captcha: the browser shows it once, then HTTP goes on
-        # with the cookies that solving it gave
+        # Usually a captcha: the browser shows it once (headless: the run
+        # stops, see check_captcha), then HTTP goes on with the cookies that
+        # solving it gave
         for article, pdffn in need_browser:
+            self.captcha_over_http = False
             if not self.fetch_pdf(article, pdffn, self.session_cookies()):
                 self.fetch_pdf_with_browser(article, pdffn)
 
@@ -333,6 +363,7 @@ class ProQuestWebScraper:
         firefox_profile_path=None
     ):
         self.browser = None
+        self.headless = headless_browser
         if browser_app == "firefox":
             options = webdriver.FirefoxOptions()
             # get() returns once the HTML is parsed, without waiting
@@ -377,6 +408,11 @@ class ProQuestWebScraper:
         """If ProQuest shows a captcha, wait until it is solved in the browser."""
         if not self.browser.find_elements(*CAPTCHA):
             return False
+        if self.headless:
+            raise CaptchaRequired(
+                "ProQuest asks for a captcha and the browser is headless: run "
+                "again later with --continue-download (the PDF files already "
+                "downloaded are kept), or without --headless to solve it")
         logging.warning("Captcha: solve it in the browser window, "
                         "the download goes on by itself")
         WebDriverWait(self.browser, timeout, poll_frequency=2).until_not(
@@ -395,8 +431,9 @@ class ProQuestWebScraper:
 
         institution_url: the address that ProQuest's "Find your institution"
         gives for the institution. If its sign-in page has a password field,
-        get_credentials() gives (username, password); the form is sent once
-        only, so a wrong password cannot lock the account.
+        get_credentials() gives (username, password). The password is sent
+        once per run only, so a wrong one cannot lock the account. Returns
+        False when the automatic login must not be tried again.
         """
         logging.info(f"Logging in through {institution_url}")
         # Start from a clean ProQuest session: with the cookies of an old
@@ -407,21 +444,32 @@ class ProQuestWebScraper:
         # ProQuest comes back to the page it was on (the publication) when
         # the login is over; the sign-in page asks for the password unless
         # the institution still has a session
-        sent = False
         steady_since = None
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             if self.browser.find_elements(*ISSUE_SELECT):
                 logging.info("Logged in")
-                return
-            fields = self.browser.find_elements(*password)
-            if fields and not sent:
-                sent = True
+                return True
+            # Visible fields only: the "Loading Session Information" page of
+            # Shibboleth has a hidden one while it checks for a session
+            try:
+                fields = [f for f in self.browser.find_elements(*password)
+                          if f.is_displayed()]
+            except WebDriverException:  # the page is changing
+                fields = []
+            if fields and self.password_page:
+                # The page where it was sent, still there, is not a new request
+                if self.browser.current_url != self.password_page:
+                    logging.warning("The sign-in page asks for the password "
+                                    "again: it is not sent twice")
+                    return False
+            elif fields:
+                self.password_page = self.browser.current_url
                 credentials = get_credentials()
                 if credentials is None:
                     logging.info("No credentials configured: "
                                  "log in in the browser window")
-                    return
+                    return False
                 user = fields[0].find_elements(
                     By.XPATH,
                     "preceding::input[@type='text' or @type='email'][1]")
@@ -451,32 +499,45 @@ class ProQuestWebScraper:
             steady_since = (steady_since or time.monotonic()) if ready else None
             if steady_since and time.monotonic() - steady_since > 5:
                 self.browser.get(url)
-                return
+                return True
             time.sleep(1)
         logging.warning("The login did not get back to ProQuest "
                         f"(the browser is at {self.browser.current_url}): "
                         "finish it in the browser window")
+        return False
 
     def wait_for_issue_page(self, url, timeout=1800, institution_url=None,
                             get_credentials=lambda: None):
         """Wait until the browser shows the issue page of the publication.
 
-        With institution_url, log in automatically (once); otherwise, or if
-        that fails, log in to ProQuest in the browser window, then open the
+        With institution_url, log in automatically, up to 3 times: about half
+        of the logins come back to ProQuest's home page (?shibbolethParameters=)
+        without logging in, and the next one, without the password (the
+        institution keeps its session), usually works. Otherwise, or if that
+        fails, log in to ProQuest in the browser window, then open the
         publication page again, in the first tab, if ProQuest does not go
         back to it.
         """
         deadline = time.monotonic() + timeout
         # first message after 10 seconds, then every minute
         last_message = time.monotonic() - 50
+        attempts = 0
         while True:
             self.reject_cookies()
             if self.browser.find_elements(*ISSUE_SELECT):
                 return
             self.check_captcha()
-            if institution_url:
-                self.log_in(url, institution_url, get_credentials)
-                institution_url = None
+            if institution_url and attempts < 3:
+                attempts += 1
+                if attempts > 1:
+                    logging.info(f"Not logged in: login attempt {attempts} of 3")
+                if self.log_in(url, institution_url, get_credentials) is False:
+                    attempts = 3
+                try:  # the publication page, if the login worked
+                    WebDriverWait(self.browser, 10).until(
+                        EC.presence_of_element_located(ISSUE_SELECT))
+                except TimeoutException:
+                    pass
                 last_message = time.monotonic() - 50
                 continue
             now = time.monotonic()
@@ -491,31 +552,23 @@ class ProQuestWebScraper:
             time.sleep(2)
 
     def select_issue(self, issue_date):
-        """Select the issue of the given date and show its contents."""
-        # Select year
-        logging.info(f"Selecting year: {issue_date.year}")
-        try:
-            select_element = self.browser.find_element(
-                By.CSS_SELECTOR,
-                "select#yearSelected")
-        except NoSuchElementException:
-            raise Exception("Cannot find year select box")
-        select = Select(select_element)
-        select.select_by_visible_text(str(issue_date.year))
-        time.sleep(2)
+        """Select the issue of the given date and show its contents.
 
-        # Select month
-        month_locale_full_name = issue_date.strftime("%B")
-        logging.info(f"Selecting month: {month_locale_full_name}")
-        try:
-            select_element = self.browser.find_element(
-                By.CSS_SELECTOR,
-                "select#monthSelected")
-        except NoSuchElementException:
-            raise Exception("Cannot find month select box")
-        select = Select(select_element)
-        select.select_by_visible_text(month_locale_full_name)
-        time.sleep(2)
+        The options are chosen by value (year "2026", month "11", issue
+        "02026Y11Y14#..."), which do not depend on the language of the page.
+        """
+        for select_id, value in (("yearSelected", str(issue_date.year)),
+                                 ("monthSelected", f"{issue_date.month:02d}")):
+            logging.info(f"Selecting {select_id}: {value}")
+            try:
+                select = Select(self.browser.find_element(By.ID, select_id))
+            except NoSuchElementException:
+                raise Exception(f"Cannot find the select box {select_id}")
+            try:
+                select.select_by_value(value)
+            except NoSuchElementException:
+                raise IssueNotFound(f"No issue in {select_id} {value} (yet)")
+            time.sleep(2)
 
         # Select issue
         logging.info(f"Selecting issue of {issue_date}")
@@ -523,16 +576,13 @@ class ProQuestWebScraper:
             select = Select(self.browser.find_element(*ISSUE_SELECT))
         except NoSuchElementException:
             raise Exception("Cannot find issue select box")
-        labels = [option.text.strip() for option in select.options]
-        for i, label in enumerate(labels):
-            try:
-                if self.parse_issue_date(label) == issue_date:
-                    break
-            except ValueError:
-                continue
+        for i, option in enumerate(select.options):
+            if self.issue_date_of(option) == issue_date:
+                break
         else:
-            raise Exception(f"No issue dated {issue_date}. "
-                            f"Issues of that month: {labels}")
+            raise IssueNotFound(
+                f"No issue dated {issue_date}. Issues of that month: "
+                f"{[option.text.strip() for option in select.options]}")
         select.select_by_index(i)
 
         # Click on "View Issue" button

@@ -34,6 +34,9 @@ PROQUEST_INSTITUTION_URL=https://www.proquest.com/shibboleth?accountid=12345
 # Credentials for the institution's sign-in page, either a local URL that
 # serves {"login": ..., "password": ...} (e.g. a password manager bridge)...
 PROQUEST_CREDENTIALS_URL=http://127.0.0.1:47555/
+# (optional) a command that starts that server; it is run only when the
+# sign-in page asks for the password
+# PROQUEST_CREDENTIALS_COMMAND=...
 # ...or the username and password themselves
 # PROQUEST_USERNAME=...
 # PROQUEST_PASSWORD=...
@@ -71,6 +74,17 @@ uv run proquest-dl 35850
 uv run economist-dl                          # the latest issue
 uv run economist-dl --issue-date 2026-11-14  # the issue of that Saturday
 ```
+
+For a daily scheduled run (cron, Windows Task Scheduler):
+
+```
+uv run economist-dl --new-issue --keep-days 31 --headless --outdir DIR
+```
+
+- `--new-issue`: download the issue of the last Saturday unless it is already in `--outdir`, without opening the browser when it is; if ProQuest does not have it yet, stop without an error, so that the next run tries again; resume an interrupted download of that issue by itself.
+- `--keep-days N`: first delete the issues in `--outdir` dated over N days ago.
+
+ProQuest asks for a captcha after about 40 PDF files in a session. With `--headless` nobody can solve it, so the run stops at once and keeps the files already downloaded; with `--new-issue` the next run resumes the download (schedule it a few times a day, e.g. every 4 hours).
 
 ### Useful options
 
