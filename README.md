@@ -21,6 +21,26 @@ This builds up a PDF issue of the magazine in question.
 
     If ProQuest shows a captcha, solve it in the browser window: the download goes on by itself, and the pauses between pages double for the rest of the run.
 
+The browser is used to log in, choose the issue and read its list of articles. The PDF files are then downloaded over HTTP with the browser's cookies, 4 at a time, without opening each article in the browser; the browser takes over only for the articles where ProQuest answers with a captcha.
+
+## Automatic login
+
+To log in by itself, `proquest-dl` reads a `.env` file (in the current folder or in the project folder; it is not in git):
+
+```
+# The address of your institution in ProQuest's "Find your institution"
+# (search for it on the login page and copy the address of the result)
+PROQUEST_INSTITUTION_URL=https://www.proquest.com/shibboleth?accountid=12345
+# Credentials for the institution's sign-in page, either a local URL that
+# serves {"login": ..., "password": ...} (e.g. a password manager bridge)...
+PROQUEST_CREDENTIALS_URL=http://127.0.0.1:47555/
+# ...or the username and password themselves
+# PROQUEST_USERNAME=...
+# PROQUEST_PASSWORD=...
+```
+
+The program rejects the optional cookies, opens the institution's address, fills the username and password on its sign-in page (sent once only, so a wrong password cannot lock the account) and accepts the pages that follow (e.g. the consent to release your attributes to ProQuest). Without credentials, or if this fails, log in by hand in the browser window.
+
 ## Requirements
 
 You will need in your PATH:

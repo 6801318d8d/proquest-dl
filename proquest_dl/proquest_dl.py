@@ -28,6 +28,36 @@ from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pd
 default_firefox_profile = Path.home() / ".proquest-dl" / "firefox-profile"
 
 
+def load_dotenv():
+    """Put the KEY=VALUE lines of .env (in the current folder, then in the
+    project folder) into the environment; variables already set win."""
+    for fp in (Path.cwd() / ".env", Path(__file__).resolve().parents[1] / ".env"):
+        if fp.is_file():
+            for line in fp.read_text(encoding="utf-8").splitlines():
+                key, sep, value = line.partition("=")
+                if sep and not key.strip().startswith("#"):
+                    os.environ.setdefault(key.strip(), value.strip().strip('"'))
+
+
+def get_credentials():
+    """(username, password) for the institution's sign-in page, from
+    PROQUEST_USERNAME and PROQUEST_PASSWORD, or from the JSON
+    {"login": ..., "password": ...} that PROQUEST_CREDENTIALS_URL serves
+    (e.g. a local password manager bridge). None: log in by hand."""
+    if os.environ.get("PROQUEST_USERNAME") and os.environ.get("PROQUEST_PASSWORD"):
+        return os.environ["PROQUEST_USERNAME"], os.environ["PROQUEST_PASSWORD"]
+    url = os.environ.get("PROQUEST_CREDENTIALS_URL")
+    if not url:
+        return None
+    try:
+        data = requests.get(url, timeout=10).json()
+        return data["login"], data["password"]
+    except Exception as e:
+        logging.warning(f"No credentials from PROQUEST_CREDENTIALS_URL "
+                        f"({type(e).__name__}): log in by hand")
+        return None
+
+
 def add_cover(cover_url, downloaddir, pagesdir, page_size):
     """Download the cover and put it as page 1 (ProQuest has no covers)."""
     response = requests.get(cover_url, timeout=60)
@@ -74,6 +104,7 @@ def main(argv=None, publication_id=None, prog="proquest-dl"):
     )
     # No usage statistics from Selenium Manager
     os.environ.setdefault("SE_AVOID_STATS", "true")
+    load_dotenv()
 
     # %%
     logging.info("Start")
@@ -206,7 +237,10 @@ def main(argv=None, publication_id=None, prog="proquest-dl"):
         # Connect to ProQuest website
         logging.info(f"Connecting to ProQuest URL={proquest_url}")
         scraper.browser.get(proquest_url)
-        scraper.wait_for_issue_page(proquest_url)
+        scraper.wait_for_issue_page(
+            proquest_url,
+            institution_url=os.environ.get("PROQUEST_INSTITUTION_URL"),
+            get_credentials=get_credentials)
 
         # %%
         if issue:

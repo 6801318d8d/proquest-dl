@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
-from concurrent.futures import ThreadPoolExecutor
+import html
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlparse
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
 from selenium.webdriver.support.wait import WebDriverWait
@@ -26,6 +29,19 @@ known_publication_ids = {
 
 CAPTCHA = (By.CSS_SELECTOR, "form#verifyCaptcha")
 ISSUE_SELECT = (By.CSS_SELECTOR, "select#issueSelected")
+COOKIES_REJECT = (By.CSS_SELECTOR, "#onetrust-reject-all-handler")
+# "Download PDF" link of an article's PDF page
+PDF_LINK = (By.CSS_SELECTOR, "a[id^=downloadPDFLink]")
+# "Proceed" button of Shibboleth identity provider pages (e.g. attribute consent)
+PROCEED = (By.CSS_SELECTOR, "button[name=_eventId_proceed], input[name=_eventId_proceed]")
+
+
+def back_on_proquest(browser):
+    """On a ProQuest page that is not one of the login redirects."""
+    url = browser.current_url
+    host = urlparse(url).hostname or ""
+    on_proquest = host == "proquest.com" or host.endswith(".proquest.com")
+    return on_proquest and "shibboleth" not in url.lower()
 
 # One call to the browser returns the whole list of articles of the issue
 ARTICLES_JS = """
@@ -46,6 +62,13 @@ return Array.from(document.querySelectorAll("li.resultItem.ltr")).map(li => {
 """
 
 
+def pdf_link_from_html(page_html):
+    """Address of the "Download PDF" link of an article's PDF page, or None."""
+    tag = re.search(r'<a\b[^>]*\bid="downloadPDFLink[^"]*"[^>]*>', page_html)
+    href = tag and re.search(r'\bhref="([^"]+)"', tag.group(0))
+    return html.unescape(href.group(1)) if href else None
+
+
 def parse_pages(loc):
     """Pages of an article from its ProQuest reference.
 
@@ -61,6 +84,39 @@ def parse_pages(loc):
     return pages
 
 
+def article_from_item(item, issue):
+    """Article from one item of the issue's list (see ARTICLES_JS)."""
+    title = item["title"]
+    if title is None:
+        raise Exception(f"Article without a title: {item}")
+    is_toc = title == "Table of Contents"
+    if is_toc:
+        issue.toc = True
+
+    # Pages from the reference, e.g.
+    # "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
+    try:
+        pages = parse_pages(item["loc"])
+    except Exception:
+        if is_toc:
+            # Table of Contents has no page number
+            pages = None
+        else:
+            raise Exception("Error extracting pages\n"
+                            f"title={title}\nloc={item['loc']}")
+
+    if not item["detailsurl"]:
+        logging.info(f"We can't find details URL for {title}")
+    if not item["pdfurl"]:
+        logging.info(f"We can't find PDF URL for {title}")
+
+    # A Table of Contents with its pages is placed like any article;
+    # only one without pages needs economist_rename_toc
+    return Article(title=title, pages=pages, pdfurl=item["pdfurl"],
+                   detailsurl=item["detailsurl"],
+                   is_toc=is_toc and pages is None)
+
+
 class ProQuestWebScraper:
 
     def __init__(self, publication_id, artdir1, tocdir, sleep_time=(2, 5),
@@ -72,7 +128,6 @@ class ProQuestWebScraper:
         self.sleep_time = tuple(sleep_time)
         self.exclude_sections = set(exclude_sections)
         self.user_agent = None
-        self.downloads = []
 
     def get_section(self):
         try:
@@ -118,6 +173,7 @@ class ProQuestWebScraper:
         time.sleep(random.uniform(*self.sleep_time))
 
     def download_article(self, article):
+        """The PDF file to write for the article, or None to skip it."""
 
         # Check whether we already have all the pages of this article
         if article.is_toc:
@@ -165,30 +221,49 @@ class ProQuestWebScraper:
                 return
 
         self.downloaded_pages.update(page_range)
-        logging.info(f"Downloading pages {article.pages}")
+        return pdffn
 
-        # Browse to article URL
-        self.go_to_page(article.pdfurl)
-
-        # Get URL of the PDF file
-        locator = (By.CSS_SELECTOR, "embed#embedded-pdf")
-        el = WebDriverWait(self.browser, 30).until(
-            EC.presence_of_element_located(locator))
-        pdf_file_url = el.get_attribute("src")
-
-        # Download the PDF file in the background while the browser goes on.
-        # The jar keeps each cookie's domain, so requests sends the session
-        # cookies only to the site they belong to.
+    def session_cookies(self):
+        """The browser's cookies. The jar keeps each cookie's domain, so
+        requests sends them only to the site they belong to."""
         cookies = requests.cookies.RequestsCookieJar()
         for c in self.browser.get_cookies():
             cookies.set(c["name"], c["value"],
                         domain=c.get("domain", ""), path=c.get("path", "/"))
-        self.downloads.append(self.executor.submit(
-            self.save_pdf, pdf_file_url, cookies, pdffn))
+        return cookies
+
+    def headers(self):
+        return {"User-Agent": self.user_agent} if self.user_agent else {}
+
+    def fetch_pdf(self, article, pdffn, cookies):
+        """Read the PDF link from the article's PDF page over HTTP and save
+        the PDF. False: the page needs the browser (captcha, or no link)."""
+        try:
+            r = requests.get(article.pdfurl, cookies=cookies,
+                             headers=self.headers(), timeout=60)
+            r.raise_for_status()
+        except requests.RequestException as e:
+            logging.warning(f"Pages {article.pages}: {e}")
+            return False
+        link = pdf_link_from_html(r.text)
+        # Pause to prevent captcha
+        time.sleep(random.uniform(*self.sleep_time))
+        if not link:
+            return False
+        self.save_pdf(link, cookies, pdffn)
+        return True
+
+    def fetch_pdf_with_browser(self, article, pdffn):
+        """Open the PDF page in the browser, where a captcha can be solved."""
+        logging.info(f"Opening pages {article.pages} in the browser")
+        self.go_to_page(article.pdfurl)
+        link = WebDriverWait(self.browser, 30).until(
+            EC.presence_of_element_located(PDF_LINK)).get_attribute("href")
+        self.save_pdf(link, self.session_cookies(), pdffn)
 
     def save_pdf(self, url, cookies, pdffn):
-        headers = {"User-Agent": self.user_agent} if self.user_agent else {}
-        r = requests.get(url, cookies=cookies, headers=headers, timeout=120)
+        r = requests.get(url, cookies=cookies, headers=self.headers(),
+                         timeout=120)
         r.raise_for_status()
         if b"%PDF" not in r.content[:1024]:
             raise Exception(f"{pdffn.name}: the server did not send a PDF "
@@ -200,46 +275,33 @@ class ProQuestWebScraper:
         tmpfn.replace(pdffn)
 
     def download_articles(self, issue):
-        self.downloads = []
-        with ThreadPoolExecutor(max_workers=4) as self.executor:
-            for article in tqdm(issue.articles, desc="Articles"):
-                self.download_article(article)
-            for future in tqdm(self.downloads, desc="PDF files"):
-                future.result()
+        """Download the PDF files without opening the articles in the
+        browser: their PDF pages are read over HTTP with the browser's
+        cookies, 4 at a time; the browser takes over where that fails."""
+        jobs = [(article, pdffn) for article in issue.articles
+                if (pdffn := self.download_article(article))]
+        logging.info(f"PDF files to download: {len(jobs)}")
+        cookies = self.session_cookies()
+        need_browser = []
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(self.fetch_pdf, article, pdffn, cookies):
+                       (article, pdffn) for article, pdffn in jobs}
+            for future in tqdm(as_completed(futures), total=len(futures),
+                               desc="PDF files"):
+                if not future.result():
+                    need_browser.append(futures[future])
+        # Usually a captcha: the browser shows it once, then HTTP goes on
+        # with the cookies that solving it gave
+        for article, pdffn in need_browser:
+            if not self.fetch_pdf(article, pdffn, self.session_cookies()):
+                self.fetch_pdf_with_browser(article, pdffn)
 
     def retrieve_articles_list(self, issue):
         """
         Download list of articles
         """
         for item in self.browser.execute_script(ARTICLES_JS):
-            title = item["title"]
-            if title is None:
-                raise Exception(f"Article without a title: {item}")
-            # whether this article is the Table of Contents
-            is_toc = title == "Table of Contents"
-            if is_toc:
-                issue.toc = True
-
-            # Pages from the reference, e.g.
-            # "The Economist; London Vol. 448, Iss. 9362,  (Sep 9, 2023): 7."
-            try:
-                pages = parse_pages(item["loc"])
-            except Exception:
-                if is_toc:
-                    # Table of Contents has no page number
-                    pages = None
-                else:
-                    raise Exception("Error extracting pages\n"
-                                    f"title={title}\nloc={item['loc']}")
-
-            if not item["detailsurl"]:
-                logging.info(f"We can't find details URL for {title}")
-            if not item["pdfurl"]:
-                logging.info(f"We can't find PDF URL for {title}")
-
-            issue.articles.append(Article(
-                title=title, pages=pages, pdfurl=item["pdfurl"],
-                detailsurl=item["detailsurl"], is_toc=is_toc))
+            issue.articles.append(article_from_item(item, issue))
 
     def get_art_count(self):
         """
@@ -285,6 +347,9 @@ class ProQuestWebScraper:
                 # Use the profile in place, not a temporary copy, so the
                 # ProQuest login is kept from one run to the next
                 Path(firefox_profile_path).mkdir(parents=True, exist_ok=True)
+                # Never offer to save the institution's password
+                (Path(firefox_profile_path) / "user.js").write_text(
+                    'user_pref("signon.rememberSignons", false);\n')
                 options.add_argument("-profile")
                 options.add_argument(str(firefox_profile_path))
             service = None
@@ -316,19 +381,76 @@ class ProQuestWebScraper:
             EC.presence_of_element_located(CAPTCHA))
         return True
 
-    def wait_for_issue_page(self, url, timeout=1800):
+    def reject_cookies(self):
+        """Click "Reject all" on ProQuest's cookie banner, if it is shown."""
+        for button in self.browser.find_elements(*COOKIES_REJECT):
+            if button.is_displayed():
+                button.click()
+                logging.info("Cookies rejected")
+
+    def log_in(self, url, institution_url, get_credentials):
+        """Log in through the institution, then open url again.
+
+        institution_url: the address that ProQuest's "Find your institution"
+        gives for the institution. If its sign-in page has a password field,
+        get_credentials() gives (username, password); the form is sent once
+        only, so a wrong password cannot lock the account.
+        """
+        logging.info(f"Logging in through {institution_url}")
+        self.browser.get(institution_url)
+        password = (By.CSS_SELECTOR, "input[type=password]")
+        WebDriverWait(self.browser, 60).until(
+            lambda b: b.find_elements(*password) or back_on_proquest(b))
+        if not back_on_proquest(self.browser):
+            credentials = get_credentials()
+            if credentials is None:
+                logging.info("No credentials configured: "
+                             "log in in the browser window")
+                return
+            field = self.browser.find_element(*password)
+            user = field.find_elements(
+                By.XPATH, "preceding::input[@type='text' or @type='email'][1]")
+            if user:
+                user[0].clear()
+                user[0].send_keys(credentials[0])
+            # Enter, not submit(): the form must send its button's name
+            field.send_keys(credentials[1] + Keys.RETURN)
+            # Pages after the password (e.g. the consent to release the
+            # attributes) are accepted with their "proceed" button
+            deadline = time.monotonic() + 120
+            while not back_on_proquest(self.browser):
+                if time.monotonic() > deadline:
+                    logging.warning("The login did not get back to ProQuest: "
+                                    "finish it in the browser window")
+                    return
+                proceed = self.browser.find_elements(*PROCEED)
+                if proceed and not self.browser.find_elements(*password):
+                    proceed[0].click()
+                time.sleep(2)
+        logging.info("Logged in")
+        self.browser.get(url)
+
+    def wait_for_issue_page(self, url, timeout=1800, institution_url=None,
+                            get_credentials=lambda: None):
         """Wait until the browser shows the issue page of the publication.
 
-        The first time, log in to ProQuest in the browser window; then open
-        the publication page again, in the first tab, if ProQuest does not
-        go back to it.
+        With institution_url, log in automatically (once); otherwise, or if
+        that fails, log in to ProQuest in the browser window, then open the
+        publication page again, in the first tab, if ProQuest does not go
+        back to it.
         """
         deadline = time.monotonic() + timeout
-        last_message = 0
+        # first message after 10 seconds, then every minute
+        last_message = time.monotonic() - 50
         while True:
+            self.reject_cookies()
             if self.browser.find_elements(*ISSUE_SELECT):
                 return
             self.check_captcha()
+            if institution_url:
+                self.log_in(url, institution_url, get_credentials)
+                institution_url = None
+                continue
             now = time.monotonic()
             if now > deadline:
                 raise TimeoutException("Timed out waiting for the issue page")

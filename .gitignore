@@ -6,3 +6,4 @@ __pycache__
 /requirements_login.txt
 .venv/
 .idea/
+.env

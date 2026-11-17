@@ -10,7 +10,8 @@ from pypdf import PdfReader
 from proquest_dl import proquest_dl
 from proquest_dl.Article import Article
 from proquest_dl.Issue import Issue
-from proquest_dl.ProQuestWebScraper import ProQuestWebScraper, parse_pages
+from proquest_dl.ProQuestWebScraper import (ProQuestWebScraper, article_from_item,
+                                            parse_pages, pdf_link_from_html)
 from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pdfs,
                               get_number_of_pages, get_page_size,
                               get_text_from_top_right_corner, insert_bookmarks,
@@ -38,6 +39,27 @@ def make_pdf(path, npages):
         objs.append(f"{3 + i} 0 obj << /Type /Page /Parent 2 0 R "
                     f"/MediaBox [0 0 {600 + i} 800] /CropBox [10 10 500 700] >> endobj".encode())
     write_raw_pdf(path, objs)
+
+
+def test_pdf_link_from_html():
+    page = ('<a class="tool-option-link pdf-download " '
+            'href="https://media.example.com/media/x?a=1&amp;b=2" '
+            'id="downloadPDFLink_MSTAR_123">Download PDF</a>')
+    assert pdf_link_from_html("<p>" + page + "</p>") == \
+        "https://media.example.com/media/x?a=1&b=2"
+    assert pdf_link_from_html('<a id="downloadPDFLink_1" href="/y">') == "/y"
+    assert pdf_link_from_html("<form id='verifyCaptcha'></form>") is None
+
+
+def test_table_of_contents_with_pages():
+    ref = "The Economist; London Vol. 461, Iss. 9525,  (Nov 14, 2026)"
+    item = {"title": "Table of Contents", "pdfurl": "https://p", "detailsurl": None}
+    issue = Issue()
+    with_pages = article_from_item({**item, "loc": ref + ": 5-6."}, issue)
+    without_pages = article_from_item({**item, "loc": ref + "."}, issue)
+    assert issue.toc
+    assert (with_pages.pages, with_pages.is_toc) == ([5, 6], False)
+    assert (without_pages.pages, without_pages.is_toc) == (None, True)
 
 
 def test_parse_pages():

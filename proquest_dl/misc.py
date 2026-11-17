@@ -137,16 +137,16 @@ def economist_rename_toc(issue, tocdir, outdir):
     assert tocpdf2.is_file()
     del tocpdf
     # Get first page of TOC from PDF file
-    page_start = get_text_from_top_right_corner(
-        tocpdf2, 40, 50, issue.page_size)
+    corner = get_text_from_top_right_corner(tocpdf2, 40, 50, issue.page_size)
+    # The box can also catch the end of the header, e.g. "5TheEconomist"
+    number = re.search(r"\d+", corner)
     # Get number of pages of TOC
     npages = get_number_of_pages(tocpdf2)
-    if not (page_start.isdigit() and 0 < int(page_start) <= 10
-            and 0 < npages <= 5):
+    if not (number and 0 < int(number.group()) <= 10 and 0 < npages <= 5):
         logging.warning(f"TOC left out: no page number in its top right corner "
-                        f"(found '{page_start}', {npages} pages)")
+                        f"(found '{corner}', {npages} pages)")
         return
-    page_start = int(page_start)
+    page_start = int(number.group())
     logging.info(f"TOC starting page: {page_start}")
     logging.info(f"TOC number of pages: {npages}")
     # Generate page range
