@@ -60,8 +60,8 @@ Selenium finds or downloads `geckodriver` by itself.
 Install the software with [uv](https://docs.astral.sh/uv/) and run it. For example:
 
 ```
-git clone https://github.com/6801318d8d/economist-proquest-dl
-cd economist-proquest-dl
+git clone https://github.com/6801318d8d/proquest-dl
+cd proquest-dl
 uv sync
 uv run proquest-dl 35850
 ```
