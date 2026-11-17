@@ -77,46 +77,6 @@ def extract_single_pages_from_pdfs(indir, outdir):
     run_in_parallel(extract_page, jobs.values())
 
 
-def generate_toc(issue, tocdir, outdir):
-    """
-    Generate TOC if we don't have one
-    """
-    if issue.toc:
-        return
-    logging.info("We don't have a Table Of Contents. Generating our own ...")
-    tocmdfile = tocdir / "toc.md"
-    tocpdffile = tocmdfile.parent / (tocmdfile.stem + ".pdf")
-    lines = ["# Table of Contents", "", "| Title | Page |", "|---|---|"]
-    for article in issue.articles:
-        title = article.title.replace("|", "/")
-        pages = ", ".join(str(x) for x in (article.pages or []))
-        lines.append(f"| {title} | {pages} |")
-    tocmdfile.write_text("\n".join(lines) + "\n", encoding="utf8")
-    cmd = [
-        "pandoc",
-        "-f",
-        "markdown",
-        "-t",
-        "pdf",
-        "-V",
-        "geometry:papersize={"
-        + str(issue.page_size[0])
-        + "pt, "
-        + str(issue.page_size[1])
-        + "pt}",
-        str(tocmdfile),
-        "-o",
-        str(tocpdffile),
-    ]
-    logging.info(
-        f"Command to convert self-generated TOC from Markdown to PDF: '{cmd}'")
-    subprocess.run(cmd, check=True)
-    # The TOC goes from page 2 on, over as many pages as pandoc made
-    npages = get_number_of_pages(tocpdffile)
-    page_range = ",".join(str(x) for x in range(2, 2 + npages))
-    shutil.move(tocpdffile, outdir / f"pages_{page_range}.pdf")
-
-
 # %%
 def economist_rename_toc(issue, tocdir, outdir):
     is_economist = (

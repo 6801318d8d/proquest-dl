@@ -19,7 +19,7 @@ from proquest_dl.Issue import Issue
 from proquest_dl.ProQuestWebScraper import (CaptchaRequired, ProQuestWebScraper,
                                             known_publication_ids)
 from proquest_dl.misc import (economist_rename_toc, extract_single_pages_from_pdfs,
-                              generate_toc, get_page_size, insert_bookmarks,
+                              get_page_size, insert_bookmarks,
                               insert_white_pages_in_issue, merge_pdf,
                               remove_cropbox_from_articles,
                               remove_last_page_from_articles, write_blank_page)
@@ -381,10 +381,8 @@ def run(args):
     # If we have TOC, get page number and rename
     # (only for The Economist, which doesn't provide page numbers for its TOC)
     economist_rename_toc(issue, tocdir, artdir3)
-
-    # %%
-    # Generate TOC if we don't have one
-    generate_toc(issue, tocdir, artdir3)
+    # A magazine without a table of contents on ProQuest gets none: the
+    # bookmarks list the articles (a generated one took the place of pages 2-3)
 
     # %%
     # Extract single pages from original PDF files

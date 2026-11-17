@@ -50,8 +50,7 @@ You will need in your PATH:
 
 - `qpdf`;
 - Ghostscript (`gs`, or `gswin64c` on Windows), to compress the final PDF;
-- ImageMagick (`magick`), for the cover of The Economist;
-- `pandoc` with a LaTeX engine, only for magazines without a table of contents on ProQuest.
+- ImageMagick (`magick`), for the cover of The Economist.
 
 Selenium finds or downloads `geckodriver` by itself.
 
