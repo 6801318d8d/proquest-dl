@@ -34,7 +34,8 @@ COOKIES_REJECT = (By.CSS_SELECTOR, "#onetrust-reject-all-handler")
 # "Download PDF" link of an article's PDF page
 PDF_LINK = (By.CSS_SELECTOR, "a[id^=downloadPDFLink]")
 # "Proceed" button of Shibboleth identity provider pages (e.g. attribute consent)
-PROCEED = (By.CSS_SELECTOR, "button[name=_eventId_proceed], input[name=_eventId_proceed]")
+PROCEED = (By.CSS_SELECTOR, "button[name=_eventId_proceed], "
+           "input[type=submit][name=_eventId_proceed]")
 
 
 def back_on_proquest(url):
@@ -432,9 +433,13 @@ class ProQuestWebScraper:
             elif not fields:
                 # Pages after the password (e.g. the consent to release
                 # the attributes) are accepted with their "proceed" button
-                proceed = self.browser.find_elements(*PROCEED)
-                if proceed:
-                    proceed[0].click()
+                for button in self.browser.find_elements(*PROCEED):
+                    try:
+                        if button.is_displayed():
+                            button.click()
+                            break
+                    except WebDriverException:  # the page is changing
+                        break
             # Back on another ProQuest page, loaded and still for 5 seconds:
             # the login is over, open the publication again
             try:
