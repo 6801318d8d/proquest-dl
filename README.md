@@ -6,7 +6,7 @@ Download magazines from ProQuest.
 
 You can download any magazine, although this has been tested on "The Economist" and "MIT Technology Review".
 
-For The Economist, the cover is also downloaded from its website (ProQuest doesn't provide covers).
+ProQuest doesn't provide covers, so they are downloaded from elsewhere for The Economist (its website), Barron's (PressReader) and New Scientist (the issue archive on its website). The cover takes the place of page 1, which ProQuest leaves blank, or goes before page 1 when the magazine does not count its cover (New Scientist). Other magazines get no cover.
 
 The pages of the magazine are put in the correct order in the PDF file (that is, page 5 will be page 5 in the resulting PDF file, and so on).
 
@@ -50,7 +50,7 @@ You will need in your PATH:
 
 - `qpdf`;
 - Ghostscript (`gs`, or `gswin64c` on Windows), to compress the final PDF;
-- ImageMagick (`magick`), for the cover of The Economist.
+- ImageMagick (`magick`), for the covers.
 
 Selenium finds or downloads `geckodriver` by itself.
 

@@ -88,19 +88,51 @@ def get_credentials():
             server.terminate()
 
 
-def add_cover(cover_url, downloaddir, pagesdir, page_size):
-    """Download the cover and put it as page 1 (ProQuest has no covers)."""
-    response = requests.get(cover_url, timeout=60)
+# PressReader's code of the publications it carries: the first page of each
+# issue is at an address made of that code and the issue's date
+PRESSREADER_CODES = {known_publication_ids["Barron's"]: "1265"}
+# An issue in New Scientist's yearly archive: its date ("31 October 2026"),
+# then its cover, within the same card
+NEW_SCIENTIST_ISSUE = re.compile(
+    r'issue-card__date">([^<]+)<(?:(?!issue-card__date).)*?<img[^>]+src="([^"?]+)', re.S)
+# PressReader refuses the default User-Agent of requests
+COVER_HEADERS = {"User-Agent": "proquest-dl"}
+
+
+def cover_url(publication_id, date):
+    """The address of the cover of the issue of that date (ProQuest has no
+    covers), None when the publication has no known source."""
+    if publication_id == known_publication_ids["The Economist"]:
+        return f"https://www.economist.com/content-assets/images/{date:%Y%m%d}_DE_EU.jpg"
+    if publication_id in PRESSREADER_CODES:
+        return (f"https://t.prcdn.co/img?file={PRESSREADER_CODES[publication_id]}"
+                f"{date:%Y%m%d}00000000001001&page=1&width=1700")
+    if publication_id == known_publication_ids["New Scientist"]:
+        archive = f"https://www.newscientist.com/issues/{date.year}/"
+        page = requests.get(archive, headers=COVER_HEADERS, timeout=60)
+        page.raise_for_status()
+        for day, src in NEW_SCIENTIST_ISSUE.findall(page.text):
+            if datetime.datetime.strptime(day.strip(), "%d %B %Y").date() == date:
+                return src + "?w=1200"
+        logging.warning(f"No issue of {date} in {archive}")
+    return None
+
+
+def add_cover(cover_url, downloaddir, pagesdir, page_size, page=1):
+    """Download the cover and put it as page 1 (ProQuest has no covers), or
+    as page 0, before page 1, for a magazine that does not count its cover."""
+    response = requests.get(cover_url, headers=COVER_HEADERS, timeout=60)
     content_type = response.headers.get("Content-Type", "")
     if response.status_code != 200 or not content_type.startswith("image/"):
         logging.warning(f"No cover at {cover_url} (HTTP {response.status_code}, "
                         f"{content_type}): page 1 stays as it is")
         return
-    coverfp = downloaddir / ("cover." + cover_url.split(".")[-1])
+    # The extension from the image type: the address may end in a query string
+    coverfp = downloaddir / ("cover." + content_type.split("/")[1].split(";")[0].strip())
     coverfp.write_bytes(response.content)
     # Stretch the image to the page and write it as a PDF page:
     # 2 pixels per point at 144 dpi give a page of exactly page_size points
-    page1fn = pagesdir / "pages_1.pdf"
+    page1fn = pagesdir / f"pages_{page}.pdf"
     size = f"{round(2 * page_size[0])}x{round(2 * page_size[1])}!"
     cmd = ["magick", str(coverfp), "-resize", size,
            "-units", "PixelsPerInch", "-density", "144", str(page1fn)]
@@ -397,12 +429,18 @@ def run(args):
     insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
 
     # %%
-    # Cover (only The Economist publishes its covers at a predictable address)
-    if args.publication_id == known_publication_ids["The Economist"]:
-        logging.info("Downloading cover")
-        cover_url = ("https://www.economist.com/content-assets/images/"
-                     f"{issue.date:%Y%m%d}_DE_EU.jpg")
-        add_cover(cover_url, downloaddir, pagesdir, issue.page_size)
+    # Cover, for the publications with a known source (see cover_url); a
+    # failure leaves page 1 as it is rather than losing the issue. It takes
+    # the place of page 1 when no article is on it (the cover is page 1, left
+    # blank); otherwise it goes before page 1 (New Scientist does not count it)
+    page = 0 if any(1 in (a.pages or []) for a in issue.articles) else 1
+    try:
+        url = cover_url(args.publication_id, issue.date)
+        if url:
+            logging.info(f"Downloading cover: {url}")
+            add_cover(url, downloaddir, pagesdir, issue.page_size, page)
+    except requests.RequestException as e:
+        logging.warning(f"No cover ({e}): page 1 stays as it is")
 
     # %%
     # Merge pages into final PDF file
@@ -415,7 +453,8 @@ def run(args):
     logging.info("Inserting bookmarks")
     infp = outfp
     outfp = downloaddir / "output2.pdf"
-    insert_bookmarks(issue, infp, outfp)
+    insert_bookmarks(issue, infp, outfp,
+                     offset=1 if (pagesdir / "pages_0.pdf").is_file() else 0)
 
     # %%
     # Compress final PDF file

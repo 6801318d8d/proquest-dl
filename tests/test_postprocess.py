@@ -128,6 +128,10 @@ def test_pipeline(tmp_path):
             for o in reader.outline] == [("First article", 1),
                                          ('The "great" article', 4),
                                          ("Third article", 8)]
+    # a cover before page 1 moves every bookmark one page on
+    insert_bookmarks(issue, tmp_path / "out.pdf", tmp_path / "out3.pdf", offset=1)
+    reader = PdfReader(tmp_path / "out3.pdf")
+    assert [reader.get_destination_page_number(o) for o in reader.outline] == [2, 5, 9]
 
 
 def text_pdf(path, text_ops):
@@ -166,12 +170,15 @@ def test_add_cover(tmp_path, monkeypatch):
             content=png.read_bytes()),
     }
     monkeypatch.setattr(proquest_dl.requests, "get",
-                        lambda url, timeout: responses[url])
+                        lambda url, headers, timeout: responses[url])
     proquest_dl.add_cover("https://x/missing.jpg", tmp_path, tmp_path, (600, 800))
     assert not (tmp_path / "pages_1.pdf").exists()
     proquest_dl.add_cover("https://x/cover.png", tmp_path, tmp_path, (600, 800))
     assert get_number_of_pages(tmp_path / "pages_1.pdf") == 1
     assert get_page_size(tmp_path / "pages_1.pdf") == (600, 800)
+    # a magazine that does not count its cover: page 0, before page 1
+    proquest_dl.add_cover("https://x/cover.png", tmp_path, tmp_path, (600, 800), page=0)
+    assert get_number_of_pages(tmp_path / "pages_0.pdf") == 1
 
 
 def test_issue_save_load(tmp_path):

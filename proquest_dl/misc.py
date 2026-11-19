@@ -19,14 +19,14 @@ def run_in_parallel(func, jobs):
         list(ex.map(lambda job: func(*job), jobs))
 
 
-def insert_bookmarks(issue, infn, outfn):
+def insert_bookmarks(issue, infn, outfn, offset=0):
     """One bookmark per article, on its first page (page N of the magazine
-    is page N of the PDF)."""
+    is page N + offset of the PDF: offset 1 when a cover precedes page 1)."""
     writer = PdfWriter(clone_from=infn)
     for article in issue.articles:
         if article.pages:
             writer.add_outline_item(title=article.title,
-                                    page_number=article.pages[0] - 1)
+                                    page_number=article.pages[0] - 1 + offset)
     writer.write(outfn)
 
 

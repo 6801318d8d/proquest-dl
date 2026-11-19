@@ -25,6 +25,8 @@ from proquest_dl.Article import Article
 known_publication_ids = {
     "The Economist": "41716",
     "MIT Technology Review": "35850",
+    "Barron's": "10337",
+    "New Scientist": "40711",
 }
 
 CAPTCHA = (By.CSS_SELECTOR, "form#verifyCaptcha")
