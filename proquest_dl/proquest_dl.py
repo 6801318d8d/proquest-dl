@@ -120,13 +120,14 @@ def cover_url(publication_id, date):
 
 def add_cover(cover_url, downloaddir, pagesdir, page_size, page=1):
     """Download the cover and put it as page 1 (ProQuest has no covers), or
-    as page 0, before page 1, for a magazine that does not count its cover."""
+    as page 0, before page 1, for a magazine that does not count its cover.
+    False: no cover at that address."""
     response = requests.get(cover_url, headers=COVER_HEADERS, timeout=60)
     content_type = response.headers.get("Content-Type", "")
     if response.status_code != 200 or not content_type.startswith("image/"):
         logging.warning(f"No cover at {cover_url} (HTTP {response.status_code}, "
-                        f"{content_type}): page 1 stays as it is")
-        return
+                        f"{content_type})")
+        return False
     # The extension from the image type: the address may end in a query string
     coverfp = downloaddir / ("cover." + content_type.split("/")[1].split(";")[0].strip())
     coverfp.write_bytes(response.content)
@@ -137,6 +138,36 @@ def add_cover(cover_url, downloaddir, pagesdir, page_size, page=1):
     cmd = ["magick", str(coverfp), "-resize", size,
            "-units", "PixelsPerInch", "-density", "144", str(page1fn)]
     logging.info(f"Command to make the cover page: '{cmd}'")
+    subprocess.run(cmd, check=True)
+    return True
+
+
+def caption(text):
+    """ImageMagick's caption: of the text, which would otherwise read a file
+    after a leading @ and expand % escapes."""
+    return "caption:" + ("\\" if text.startswith("@") else "") + text.replace("%", "%%")
+
+
+def make_cover(name, label, pagesdir, page_size, page=1):
+    """Draw a cover, for a publication whose cover cannot be downloaded: its
+    name and the issue's label on ProQuest, e.g. "Nov/Dec 2026; Vol. 129 (6)",
+    one line per part. page as in add_cover."""
+    w, h = round(2 * page_size[0]), round(2 * page_size[1])
+    lines = [part.strip(" ,") for part in label.split(";")]
+    cmd = ["magick", "-size", f"{w}x{h}", "xc:#1b2a41",
+           "-background", "none", "-fill", "white", "-gravity", "center",
+           # the name fills its box, like a masthead; a missing font only warns
+           "(", "-size", f"{w * 8 // 10}x{h * 3 // 10}", "-font", "Georgia-Bold",
+           caption(name), ")", "-geometry", f"+0-{h * 17 // 100}", "-composite",
+           "-fill", "#e0b84f", "-draw",
+           f"rectangle {w * 4 // 10},{h * 53 // 100} {w * 6 // 10},{h * 53 // 100 + h // 200}",
+           "(", "-size", f"{w * 8 // 10}x", "-pointsize", str(h // 30), "-fill", "#d0d7de",
+           "-font", "Georgia", caption("\n".join(x for x in lines if x)), ")",
+           "-geometry", f"+0+{h * 12 // 100}", "-composite",
+           # 2 pixels per point at 144 dpi, as in add_cover; flat colours zip small
+           "-units", "PixelsPerInch", "-density", "144", "-compress", "Zip",
+           str(pagesdir / f"pages_{page}.pdf")]
+    logging.info(f"Command to draw the cover page: '{cmd}'")
     subprocess.run(cmd, check=True)
 
 
@@ -361,7 +392,8 @@ def run(args):
 
             # Get date in which the issue was released
             issue.date = scraper.get_issue_date()
-            logging.info(f"Issue date of publication: {issue.date}")
+            issue.label = scraper.get_issue_label()
+            logging.info(f"Issue date of publication: {issue.date} ({issue.label})")
             if args.issue_date is not None:
                 assert issue.date == args.issue_date, issue.date
             done = Path(args.outdir) / issue.build_final_fp()
@@ -429,18 +461,24 @@ def run(args):
     insert_white_pages_in_issue(artdir3, pagesdir, whitepdffp)
 
     # %%
-    # Cover, for the publications with a known source (see cover_url); a
-    # failure leaves page 1 as it is rather than losing the issue. It takes
-    # the place of page 1 when no article is on it (the cover is page 1, left
-    # blank); otherwise it goes before page 1 (New Scientist does not count it)
+    # Cover, downloaded for the publications with a known source (see
+    # cover_url), else drawn. It takes the place of page 1 when no article is
+    # on it (the cover is page 1, left blank); otherwise it goes before page 1
+    # (New Scientist does not count it)
     page = 0 if any(1 in (a.pages or []) for a in issue.articles) else 1
+    downloaded = False
     try:
         url = cover_url(args.publication_id, issue.date)
         if url:
             logging.info(f"Downloading cover: {url}")
-            add_cover(url, downloaddir, pagesdir, issue.page_size, page)
+            downloaded = add_cover(url, downloaddir, pagesdir, issue.page_size, page)
     except requests.RequestException as e:
-        logging.warning(f"No cover ({e}): page 1 stays as it is")
+        logging.warning(f"No cover ({e})")
+    if not downloaded:
+        logging.info("Drawing the cover")
+        # an issue.json saved before the label was kept has none
+        make_cover(issue.publication_name, issue.label or issue.date.isoformat(),
+                   pagesdir, issue.page_size, page)
 
     # %%
     # Merge pages into final PDF file

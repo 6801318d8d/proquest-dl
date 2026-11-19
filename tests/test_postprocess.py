@@ -171,9 +171,9 @@ def test_add_cover(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(proquest_dl.requests, "get",
                         lambda url, headers, timeout: responses[url])
-    proquest_dl.add_cover("https://x/missing.jpg", tmp_path, tmp_path, (600, 800))
+    assert not proquest_dl.add_cover("https://x/missing.jpg", tmp_path, tmp_path, (600, 800))
     assert not (tmp_path / "pages_1.pdf").exists()
-    proquest_dl.add_cover("https://x/cover.png", tmp_path, tmp_path, (600, 800))
+    assert proquest_dl.add_cover("https://x/cover.png", tmp_path, tmp_path, (600, 800))
     assert get_number_of_pages(tmp_path / "pages_1.pdf") == 1
     assert get_page_size(tmp_path / "pages_1.pdf") == (600, 800)
     # a magazine that does not count its cover: page 0, before page 1
@@ -181,9 +181,20 @@ def test_add_cover(tmp_path, monkeypatch):
     assert get_number_of_pages(tmp_path / "pages_0.pdf") == 1
 
 
+def test_make_cover(tmp_path):
+    proquest_dl.make_cover("New York Times Book Review", "Nov/Dec 2026; Vol. 129 (6)",
+                           tmp_path, (600, 800))
+    assert get_number_of_pages(tmp_path / "pages_1.pdf") == 1
+    assert get_page_size(tmp_path / "pages_1.pdf") == (600, 800)
+    # a leading @ would make ImageMagick read a file, % an escape
+    proquest_dl.make_cover("@100% Science", "2026", tmp_path, (600, 800), page=0)
+    assert get_page_size(tmp_path / "pages_0.pdf") == (600, 800)
+
+
 def test_issue_save_load(tmp_path):
     issue = Issue(publication_id="41716", publication_name="The Economist",
-                  date=datetime.date(2026, 11, 14), toc=True,
+                  date=datetime.date(2026, 11, 14), label="Nov 14, 2026; Vol. 457 (9473)",
+                  toc=True,
                   articles=[Article("A", [2, 3], "https://p", "https://d", False),
                             Article("Table of Contents", None, None, None, True)])
     issue.save(tmp_path / "issue.json")

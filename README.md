@@ -6,7 +6,7 @@ Download magazines from ProQuest.
 
 You can download any magazine, although this has been tested on "The Economist" and "MIT Technology Review".
 
-ProQuest doesn't provide covers, so they are downloaded from elsewhere for The Economist (its website), Barron's (PressReader) and New Scientist (the issue archive on its website). The cover takes the place of page 1, which ProQuest leaves blank, or goes before page 1 when the magazine does not count its cover (New Scientist). Other magazines get no cover.
+ProQuest doesn't provide covers, so they are downloaded from elsewhere for The Economist (its website), Barron's (PressReader) and New Scientist (the issue archive on its website). Other magazines, and an issue whose cover cannot be downloaded, get a cover drawn by proquest-dl: the name of the magazine and the issue as ProQuest names it (e.g. "Nov/Dec 2026", "Vol. 129 (6)"). The cover takes the place of page 1, which ProQuest leaves blank, or goes before page 1 when an article is on page 1 (New Scientist does not count its cover).
 
 The pages of the magazine are put in the correct order in the PDF file (that is, page 5 will be page 5 in the resulting PDF file, and so on).
 

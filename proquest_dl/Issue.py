@@ -17,6 +17,8 @@ class Issue:
     page_size: tuple[float, float] = (0, 0)
     toc: bool = False
     date: datetime.date | None = None
+    # the issue as ProQuest names it, e.g. "Nov/Dec 2026; Vol. 129 (6)"
+    label: str = ""
 
     def build_final_fp(self):
         """

@@ -182,6 +182,11 @@ class ProQuestWebScraper:
         select = Select(self.browser.find_element(*ISSUE_SELECT))
         return self.issue_date_of(select.first_selected_option)
 
+    def get_issue_label(self):
+        """Label of the selected issue, e.g. "Nov/Dec 2026; Vol. 129 (6)"."""
+        select = Select(self.browser.find_element(*ISSUE_SELECT))
+        return select.first_selected_option.text.strip()
+
     def go_to_page(self, url):
         while True:
             self.browser.get(url)
