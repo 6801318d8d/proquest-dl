@@ -4,6 +4,7 @@
 # Imports
 import argparse
 import datetime
+import itertools
 import logging
 import os
 import re
@@ -95,8 +96,35 @@ PRESSREADER_CODES = {known_publication_ids["Barron's"]: "1265"}
 # then its cover, within the same card
 NEW_SCIENTIST_ISSUE = re.compile(
     r'issue-card__date">([^<]+)<(?:(?!issue-card__date).)*?<img[^>]+src="([^"?]+)', re.S)
+# MIT Technology Review's issues, newest first, a year per page, each with its
+# year and cover; its months ("November/December 2026") only on its own page
+MIT_TR_ISSUES = ("https://wp.technologyreview.com/wp-json/irving/v1/data/magazine_issues"
+                 "?issueType=MIT%20Technology%20Review%20Magazine&page={}")
+MIT_TR_MONTHS = re.compile(r'"issueDate":"([^"]+)"')
 # PressReader refuses the default User-Agent of requests
 COVER_HEADERS = {"User-Agent": "proquest-dl"}
+
+
+def mit_technology_review_cover(date):
+    """The cover of the issue that starts in the month of date (ProQuest
+    dates "Nov/Dec 2026" 1 November 2026), None if the site has none."""
+    for page in itertools.count(1):
+        response = requests.get(MIT_TR_ISSUES.format(page), headers=COVER_HEADERS, timeout=60)
+        response.raise_for_status()
+        # leave out the headings of the years and the issues without a cover
+        issues = [x for x in response.json() if x["name"] == "magazine-issue" and x["children"]]
+        if not issues or int(issues[0]["config"]["yearPublished"]) < date.year:
+            break
+        for issue in issues:
+            if int(issue["config"]["yearPublished"]) != date.year:
+                continue
+            months = MIT_TR_MONTHS.search(requests.get(
+                issue["config"]["permalink"], headers=COVER_HEADERS, timeout=60).text)
+            if (months and months.group(1).startswith(f"{date:%B}")
+                    and months.group(1).endswith(str(date.year))):
+                return issue["children"][0]["config"]["url"]
+    logging.warning(f"No issue of {date:%B %Y} on technologyreview.com")
+    return None
 
 
 def cover_url(publication_id, date):
@@ -115,6 +143,8 @@ def cover_url(publication_id, date):
             if datetime.datetime.strptime(day.strip(), "%d %B %Y").date() == date:
                 return src + "?w=1200"
         logging.warning(f"No issue of {date} in {archive}")
+    if publication_id == known_publication_ids["MIT Technology Review"]:
+        return mit_technology_review_cover(date)
     return None
 
 
